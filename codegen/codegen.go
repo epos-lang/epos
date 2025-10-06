@@ -66,7 +66,7 @@ func (cg *CodeGen) getReturnType(body []parser.Stmt) types.Type {
 
 // Generate generates LLVM IR for the given statements
 func (cg *CodeGen) Generate(stmts []parser.Stmt) *ir.Module {
-	main := cg.module.NewFunc("lua_main", types.I32)
+	main := cg.module.NewFunc("main", types.I32)
 	entry := main.NewBlock("entry")
 
 	for _, stmt := range stmts {
@@ -76,6 +76,9 @@ func (cg *CodeGen) Generate(stmts []parser.Stmt) *ir.Module {
 		default:
 			entry = cg.genStmt(entry, stmt, cg.vars)
 		}
+	}
+	if f, ok := cg.functions["main"]; ok && len(f.Params) == 0 {
+		entry.NewCall(f)
 	}
 	entry.NewRet(constant.NewInt(types.I32, 0))
 
@@ -88,7 +91,11 @@ func (cg *CodeGen) genFunction(s *parser.FunctionStmt) {
 		paramList = append(paramList, ir.NewParam(paramName, types.Double))
 	}
 	rt := cg.getReturnType(s.Body)
-	f := cg.module.NewFunc(s.Name, rt, paramList...)
+	name := s.Name
+	if name == "main" {
+		name = "lua_user_main"
+	}
+	f := cg.module.NewFunc(name, rt, paramList...)
 	entry := f.NewBlock("entry")
 
 	localVars := make(map[string]*ir.InstAlloca)

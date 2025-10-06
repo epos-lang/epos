@@ -74,7 +74,7 @@ func main() {
 	}
 
 	// Compile to executable
-	cmd = exec.Command("clang", tempS, "-o", outputFile, "-e", "lua_main")
+	cmd = exec.Command("clang", tempS, "-o", outputFile)
 	var clangStdout, clangStderr bytes.Buffer
 	cmd.Stdout = &clangStdout
 	cmd.Stderr = &clangStderr
