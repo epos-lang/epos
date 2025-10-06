@@ -33,6 +33,30 @@ func NewCodeGen() *CodeGen {
 	return &CodeGen{module: m, vars: make(map[string]*ir.InstAlloca), functions: make(map[string]*ir.Func), printf: printf, globalFmt: globalFmt}
 }
 
+func (cg *CodeGen) findReturnType(stmts []parser.Stmt) types.Type {
+	for _, stmt := range stmts {
+		switch s := stmt.(type) {
+		case *parser.ReturnStmt:
+			return cg.getExprType(s.Expr)
+		case *parser.IfStmt:
+			rt := cg.findReturnType(s.Then)
+			if !rt.Equal(types.Void) {
+				return rt
+			}
+			rt = cg.findReturnType(s.Else)
+			if !rt.Equal(types.Void) {
+				return rt
+			}
+		case *parser.WhileStmt:
+			rt := cg.findReturnType(s.Body)
+			if !rt.Equal(types.Void) {
+				return rt
+			}
+		}
+	}
+	return types.Void
+}
+
 func (cg *CodeGen) getExprType(expr parser.Expr) types.Type {
 	switch expr.(type) {
 	case *parser.NumberExpr:
@@ -56,12 +80,7 @@ func (cg *CodeGen) getExprType(expr parser.Expr) types.Type {
 }
 
 func (cg *CodeGen) getReturnType(body []parser.Stmt) types.Type {
-	for _, stmt := range body {
-		if r, ok := stmt.(*parser.ReturnStmt); ok {
-			return cg.getExprType(r.Expr)
-		}
-	}
-	return types.Void
+	return cg.findReturnType(body)
 }
 
 // Generate generates LLVM IR for the given statements
@@ -96,6 +115,7 @@ func (cg *CodeGen) genFunction(s *parser.FunctionStmt) {
 		name = "lua_user_main"
 	}
 	f := cg.module.NewFunc(name, rt, paramList...)
+	cg.functions[s.Name] = f
 	entry := f.NewBlock("entry")
 
 	localVars := make(map[string]*ir.InstAlloca)
@@ -108,13 +128,7 @@ func (cg *CodeGen) genFunction(s *parser.FunctionStmt) {
 
 	current := cg.genStmts(entry, s.Body, localVars)
 
-	hasReturn := false
-	if len(s.Body) > 0 {
-		if _, ok := s.Body[len(s.Body)-1].(*parser.ReturnStmt); ok {
-			hasReturn = true
-		}
-	}
-	if !hasReturn {
+	if current.Term == nil {
 		if types.IsVoid(rt) {
 			current.NewRet(nil)
 		} else {
@@ -132,7 +146,6 @@ func (cg *CodeGen) genFunction(s *parser.FunctionStmt) {
 			current.NewRet(zeroVal)
 		}
 	}
-	cg.functions[s.Name] = f
 }
 
 func (cg *CodeGen) genStmt(bb *ir.Block, stmt parser.Stmt, vars map[string]*ir.InstAlloca) *ir.Block {
@@ -195,10 +208,14 @@ func (cg *CodeGen) genStmt(bb *ir.Block, stmt parser.Stmt, vars map[string]*ir.I
 		bb.NewCondBr(cond, thenBB, elseBB)
 
 		thenEnd := cg.genStmts(thenBB, s.Then, vars)
-		thenEnd.NewBr(mergeBB)
+		if thenEnd.Term == nil {
+			thenEnd.NewBr(mergeBB)
+		}
 
 		elseEnd := cg.genStmts(elseBB, s.Else, vars)
-		elseEnd.NewBr(mergeBB)
+		if elseEnd.Term == nil {
+			elseEnd.NewBr(mergeBB)
+		}
 
 		return mergeBB
 	case *parser.WhileStmt:
@@ -223,7 +240,9 @@ func (cg *CodeGen) genStmt(bb *ir.Block, stmt parser.Stmt, vars map[string]*ir.I
 		condBB.NewCondBr(cond, bodyBB, exitBB)
 
 		bodyEnd := cg.genStmts(bodyBB, s.Body, vars)
-		bodyEnd.NewBr(condBB)
+		if bodyEnd.Term == nil {
+			bodyEnd.NewBr(condBB)
+		}
 
 		return exitBB
 	default:
@@ -256,6 +275,13 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]*ir.I
 			panic("undefined variable: " + e.Name)
 		}
 		return bb.NewLoad(types.Double, alloc)
+	case *parser.UnaryExpr:
+		if e.Op == parser.TokenMinus {
+			zero := constant.NewFloat(types.Double, 0)
+			operand := cg.genExpr(bb, e.Expr, vars)
+			return bb.NewFSub(zero, operand)
+		}
+		panic("unknown unary operator")
 	case *parser.BinaryExpr:
 		left := cg.genExpr(bb, e.Left, vars)
 		right := cg.genExpr(bb, e.Right, vars)

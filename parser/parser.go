@@ -60,6 +60,11 @@ type BinaryExpr struct {
 	Right Expr
 }
 
+type UnaryExpr struct {
+	Op   TokenType
+	Expr Expr
+}
+
 type Stmt interface{}
 
 type AssignStmt struct {
@@ -368,7 +373,7 @@ func (p *Parser) parseAdditive() Expr {
 }
 
 func (p *Parser) parseMultiplicative() Expr {
-	expr := p.parsePrimary()
+	expr := p.parseUnary()
 	for {
 		tok := p.current()
 		if tok.Type == TokenMul || tok.Type == TokenDiv {
@@ -380,6 +385,15 @@ func (p *Parser) parseMultiplicative() Expr {
 		}
 	}
 	return expr
+}
+
+func (p *Parser) parseUnary() Expr {
+	if p.current().Type == TokenMinus {
+		p.pos++
+		expr := p.parsePrimary()
+		return &UnaryExpr{Op: TokenMinus, Expr: expr}
+	}
+	return p.parsePrimary()
 }
 
 func (p *Parser) parsePrimary() Expr {
