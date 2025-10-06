@@ -1,6 +1,7 @@
 package codegen
 
 import (
+	"fmt"
 	"lua_llvm/parser"
 
 	"github.com/llir/llvm/ir"
@@ -17,6 +18,7 @@ type CodeGen struct {
 	functions map[string]*ir.Func
 	printf    *ir.Func
 	globalFmt *ir.Global
+	strFmt    *ir.Global
 }
 
 // NewCodeGen creates a new CodeGen
@@ -27,10 +29,12 @@ func NewCodeGen() *CodeGen {
 	printfTy.Variadic = true
 	printf := m.NewFunc("printf", printfTy)
 
-	fmtStr := constant.NewCharArrayFromString("%f\n\x00")
+	fmtStr := constant.NewCharArrayFromString("%f\n" + "\x00\x00\x00\x00")
 	globalFmt := m.NewGlobalDef("fmt", fmtStr)
+	strFmtStr := constant.NewCharArrayFromString("%s\n" + "\x00\x00\x00\x00")
+	strFmt := m.NewGlobalDef("strfmt", strFmtStr)
 
-	return &CodeGen{module: m, vars: make(map[string]*ir.InstAlloca), functions: make(map[string]*ir.Func), printf: printf, globalFmt: globalFmt}
+	return &CodeGen{module: m, vars: make(map[string]*ir.InstAlloca), functions: make(map[string]*ir.Func), printf: printf, globalFmt: globalFmt, strFmt: strFmt}
 }
 
 func (cg *CodeGen) findReturnType(stmts []parser.Stmt) types.Type {
@@ -171,8 +175,7 @@ func (cg *CodeGen) genStmt(bb *ir.Block, stmt parser.Stmt, vars map[string]*ir.I
 			elemType := format.Type().(*types.PointerType).ElemType
 			fmtPtr = bb.NewGetElementPtr(elemType, format, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
 		} else if types.IsPointer(val.Type()) {
-			strFmtStr := constant.NewCharArrayFromString("%s\n\x00")
-			format = cg.module.NewGlobalDef("strfmt", strFmtStr)
+			format = cg.strFmt
 			elemType := format.Type().(*types.PointerType).ElemType
 			fmtPtr = bb.NewGetElementPtr(elemType, format, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
 		} else {
@@ -245,6 +248,51 @@ func (cg *CodeGen) genStmt(bb *ir.Block, stmt parser.Stmt, vars map[string]*ir.I
 		}
 
 		return exitBB
+	case *parser.MatchStmt:
+		val := cg.genExpr(bb, s.Expr, vars)
+		mergeBB := bb.Parent.NewBlock("match_merge")
+		defaultBB := bb.Parent.NewBlock("match_default")
+		current := bb
+		for i, cas := range s.Cases {
+			caseBodyBB := bb.Parent.NewBlock(fmt.Sprintf("match_case_%d", i))
+			condCurrent := current
+			var next *ir.Block
+			if i+1 < len(s.Cases) {
+				next = bb.Parent.NewBlock(fmt.Sprintf("match_next_%d", i+1))
+			} else {
+				next = defaultBB
+			}
+			for j, v := range cas.Values {
+				vConst := cg.genExpr(condCurrent, v, vars)
+				cmp := condCurrent.NewFCmp(enum.FPredOEQ, val, vConst)
+				isLast := j == len(cas.Values)-1
+				if isLast {
+					condCurrent.NewCondBr(cmp, caseBodyBB, next)
+				} else {
+					orNext := bb.Parent.NewBlock(fmt.Sprintf("match_or_%d_%d", i, j))
+					condCurrent.NewCondBr(cmp, caseBodyBB, orNext)
+					condCurrent = orNext
+				}
+			}
+			bodyEnd := cg.genStmt(caseBodyBB, cas.Body, vars)
+			if bodyEnd.Term == nil {
+				bodyEnd.NewBr(mergeBB)
+			}
+			current = next
+		}
+		var defaultEnd *ir.Block
+		if s.Default != nil {
+			defaultEnd = cg.genStmt(defaultBB, s.Default, vars)
+		} else {
+			defaultEnd = defaultBB
+		}
+		if defaultEnd.Term == nil {
+			defaultEnd.NewBr(mergeBB)
+		}
+		if len(s.Cases) == 0 {
+			bb.NewBr(defaultBB)
+		}
+		return mergeBB
 	default:
 		panic("unknown statement type")
 	}
@@ -263,7 +311,7 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]*ir.I
 	case *parser.NumberExpr:
 		return constant.NewFloat(types.Double, e.Value)
 	case *parser.StringExpr:
-		strConst := constant.NewCharArrayFromString(e.Value + "\x00")
+		strConst := constant.NewCharArrayFromString(e.Value + "\x00\x00\x00\x00")
 		globalStr := cg.module.NewGlobalDef("", strConst)
 		elemType := globalStr.Type().(*types.PointerType).ElemType
 		ptr := bb.NewGetElementPtr(elemType, globalStr, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))

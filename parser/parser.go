@@ -35,6 +35,9 @@ const (
 	TokenWhile
 	TokenDo
 	TokenString
+	TokenMatch
+	TokenDefault
+	TokenArrow
 )
 
 // Token struct
@@ -102,6 +105,17 @@ type WhileStmt struct {
 	Body []Stmt
 }
 
+type MatchCase struct {
+	Values []Expr
+	Body   Stmt
+}
+
+type MatchStmt struct {
+	Expr    Expr
+	Cases   []MatchCase
+	Default Stmt
+}
+
 type StringExpr struct {
 	Value string
 }
@@ -137,7 +151,9 @@ func (l *Lexer) Lex() []Token {
 		case ch == '+':
 			l.addToken(TokenPlus, "+")
 		case ch == '-':
-			if l.peekChar() == '-' {
+			if l.peekChar() == '>' {
+				l.addToken(TokenArrow, "->")
+			} else if l.peekChar() == '-' {
 				l.lexComment()
 			} else {
 				l.addToken(TokenMinus, "-")
@@ -254,6 +270,10 @@ func (l *Lexer) lexIdentifier() {
 		l.tokens = append(l.tokens, Token{Type: TokenWhile, Value: id})
 	} else if id == "do" {
 		l.tokens = append(l.tokens, Token{Type: TokenDo, Value: id})
+	} else if id == "match" {
+		l.tokens = append(l.tokens, Token{Type: TokenMatch, Value: id})
+	} else if id == "default" {
+		l.tokens = append(l.tokens, Token{Type: TokenDefault, Value: id})
 	} else {
 		l.tokens = append(l.tokens, Token{Type: TokenIdentifier, Value: id})
 	}
@@ -291,6 +311,8 @@ func (p *Parser) parseStmt() Stmt {
 		return p.parseIf()
 	} else if tok.Type == TokenWhile {
 		return p.parseWhile()
+	} else if tok.Type == TokenMatch {
+		return p.parseMatch()
 	} else {
 		return &ExprStmt{Expr: p.parseExpr()}
 	}
@@ -340,6 +362,34 @@ func (p *Parser) parseWhile() *WhileStmt {
 	}
 	p.consume(TokenEnd)
 	return &WhileStmt{Cond: cond, Body: body}
+}
+
+func (p *Parser) parseMatch() *MatchStmt {
+	p.consume(TokenMatch)
+	expr := p.parseExpr()
+	p.consume(TokenThen)
+	var cases []MatchCase
+	var defaultStmt Stmt
+	for p.current().Type != TokenEnd {
+		if p.current().Type == TokenDefault {
+			p.consume(TokenDefault)
+			p.consume(TokenArrow)
+			defaultStmt = p.parseStmt()
+			break
+		} else {
+			var values []Expr
+			values = append(values, p.parseExpr())
+			for p.current().Type == TokenComma {
+				p.pos++
+				values = append(values, p.parseExpr())
+			}
+			p.consume(TokenArrow)
+			body := p.parseStmt()
+			cases = append(cases, MatchCase{Values: values, Body: body})
+		}
+	}
+	p.consume(TokenEnd)
+	return &MatchStmt{Expr: expr, Cases: cases, Default: defaultStmt}
 }
 
 func (p *Parser) parseIf() *IfStmt {
