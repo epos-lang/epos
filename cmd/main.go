@@ -10,11 +10,11 @@ import (
 )
 
 func main() {
-	code := `function add(x, y)
-return x + y
-end
-
-print(add(1, 2))`
+	code := `i = 0
+while i < 5 do
+print(i)
+i = i + 1
+end`
 
 	lexer := parser.NewLexer(code)
 	tokens := lexer.Lex()

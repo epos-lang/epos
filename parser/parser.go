@@ -26,6 +26,14 @@ const (
 	TokenEnd
 	TokenReturn
 	TokenComma
+	TokenIf
+	TokenThen
+	TokenElse
+	TokenGT
+	TokenLT
+	TokenEQ
+	TokenWhile
+	TokenDo
 )
 
 // Token struct
@@ -77,6 +85,17 @@ type ReturnStmt struct {
 	Expr Expr
 }
 
+type IfStmt struct {
+	Cond Expr
+	Then []Stmt
+	Else []Stmt
+}
+
+type WhileStmt struct {
+	Cond Expr
+	Body []Stmt
+}
+
 // Lexer
 type Lexer struct {
 	input  string
@@ -117,6 +136,17 @@ func (l *Lexer) Lex() []Token {
 			l.addToken(TokenRParen, ")")
 		case ch == ',':
 			l.addToken(TokenComma, ",")
+		case ch == '>':
+			l.addToken(TokenGT, ">")
+		case ch == '<':
+			l.addToken(TokenLT, "<")
+		case ch == '=':
+			if l.peekChar() == '=' {
+				l.pos++
+				l.addToken(TokenEQ, "==")
+			} else {
+				l.addToken(TokenAssign, "=")
+			}
 		default:
 			panic(fmt.Sprintf("unexpected character: %c", ch))
 		}
@@ -139,6 +169,13 @@ func (l *Lexer) lexNumber() {
 	l.tokens = append(l.tokens, Token{Type: TokenNumber, Value: numStr})
 }
 
+func (l *Lexer) peekChar() byte {
+	if l.pos+1 < len(l.input) {
+		return l.input[l.pos+1]
+	}
+	return 0
+}
+
 func (l *Lexer) lexIdentifier() {
 	start := l.pos
 	for l.pos < len(l.input) && (unicode.IsLetter(rune(l.input[l.pos])) || unicode.IsDigit(rune(l.input[l.pos]))) {
@@ -153,6 +190,16 @@ func (l *Lexer) lexIdentifier() {
 		l.tokens = append(l.tokens, Token{Type: TokenEnd, Value: id})
 	} else if id == "return" {
 		l.tokens = append(l.tokens, Token{Type: TokenReturn, Value: id})
+	} else if id == "if" {
+		l.tokens = append(l.tokens, Token{Type: TokenIf, Value: id})
+	} else if id == "then" {
+		l.tokens = append(l.tokens, Token{Type: TokenThen, Value: id})
+	} else if id == "else" {
+		l.tokens = append(l.tokens, Token{Type: TokenElse, Value: id})
+	} else if id == "while" {
+		l.tokens = append(l.tokens, Token{Type: TokenWhile, Value: id})
+	} else if id == "do" {
+		l.tokens = append(l.tokens, Token{Type: TokenDo, Value: id})
 	} else {
 		l.tokens = append(l.tokens, Token{Type: TokenIdentifier, Value: id})
 	}
@@ -186,6 +233,10 @@ func (p *Parser) parseStmt() Stmt {
 		return p.parseFunction()
 	} else if tok.Type == TokenReturn {
 		return p.parseReturn()
+	} else if tok.Type == TokenIf {
+		return p.parseIf()
+	} else if tok.Type == TokenWhile {
+		return p.parseWhile()
 	} else {
 		panic("unexpected statement")
 	}
@@ -225,14 +276,60 @@ func (p *Parser) parseFunction() *FunctionStmt {
 	return &FunctionStmt{Name: name, Params: params, Body: body}
 }
 
+func (p *Parser) parseWhile() *WhileStmt {
+	p.consume(TokenWhile)
+	cond := p.parseExpr()
+	p.consume(TokenDo)
+	var body []Stmt
+	for p.current().Type != TokenEnd {
+		body = append(body, p.parseStmt())
+	}
+	p.consume(TokenEnd)
+	return &WhileStmt{Cond: cond, Body: body}
+}
+
+func (p *Parser) parseIf() *IfStmt {
+	p.consume(TokenIf)
+	cond := p.parseExpr()
+	p.consume(TokenThen)
+	var thenBody []Stmt
+	for p.current().Type != TokenElse && p.current().Type != TokenEnd {
+		thenBody = append(thenBody, p.parseStmt())
+	}
+	var elseBody []Stmt
+	if p.current().Type == TokenElse {
+		p.consume(TokenElse)
+		for p.current().Type != TokenEnd {
+			elseBody = append(elseBody, p.parseStmt())
+		}
+	}
+	p.consume(TokenEnd)
+	return &IfStmt{Cond: cond, Then: thenBody, Else: elseBody}
+}
+
 func (p *Parser) parseReturn() *ReturnStmt {
 	p.consume(TokenReturn)
 	expr := p.parseExpr()
 	return &ReturnStmt{Expr: expr}
 }
 
+func (p *Parser) parseRelational() Expr {
+	expr := p.parseAdditive()
+	for {
+		tok := p.current()
+		if tok.Type == TokenGT || tok.Type == TokenLT || tok.Type == TokenEQ {
+			p.pos++
+			right := p.parseAdditive()
+			expr = &BinaryExpr{Op: tok.Type, Left: expr, Right: right}
+		} else {
+			break
+		}
+	}
+	return expr
+}
+
 func (p *Parser) parseExpr() Expr {
-	return p.parseAdditive()
+	return p.parseRelational()
 }
 
 func (p *Parser) parseAdditive() Expr {

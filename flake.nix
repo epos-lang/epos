@@ -10,6 +10,8 @@
     flake-utils.lib.eachDefaultSystem (system:
       let pkgs = import nixpkgs { inherit system; };
       in {
+
+        # Add pkgs.buildGoPackage
         packages.default = pkgs.stdenv.mkDerivation {
           pname = "lua_llvm";
           version = "0.0.1";
