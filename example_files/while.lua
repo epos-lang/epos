@@ -1,4 +1,4 @@
-function main()
+fn main()
 	a = 0
 	while a < 10 do
 		print(a)

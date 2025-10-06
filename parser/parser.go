@@ -238,7 +238,7 @@ func (l *Lexer) lexIdentifier() {
 	id := l.input[start:l.pos]
 	if id == "print" {
 		l.tokens = append(l.tokens, Token{Type: TokenPrint, Value: id})
-	} else if id == "function" {
+	} else if id == "fn" {
 		l.tokens = append(l.tokens, Token{Type: TokenFunction, Value: id})
 	} else if id == "end" {
 		l.tokens = append(l.tokens, Token{Type: TokenEnd, Value: id})

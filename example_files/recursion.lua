@@ -1,4 +1,4 @@
-function fact(n)
+fn fact(n)
 	if n == 0 then
 		return 1
 	else

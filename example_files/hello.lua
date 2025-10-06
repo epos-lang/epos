@@ -5,7 +5,7 @@
   --]]
 --]]
 
-function hello()
+fn hello()
 	return "Hello World!"
 end
 
