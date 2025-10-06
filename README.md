@@ -1,6 +1,10 @@
 # lua_llvm
 _A LLVM compiler for Lua written Go_
 
+## Notes:
+- This is WIP
+- I'm not a fan of starting counting at 1 so this starts at 0
+
 ## Setup
 - Run `nix build`
 
