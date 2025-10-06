@@ -34,6 +34,7 @@ const (
 	TokenEQ
 	TokenWhile
 	TokenDo
+	TokenString
 )
 
 // Token struct
@@ -96,6 +97,14 @@ type WhileStmt struct {
 	Body []Stmt
 }
 
+type StringExpr struct {
+	Value string
+}
+
+type ExprStmt struct {
+	Expr Expr
+}
+
 // Lexer
 type Lexer struct {
 	input  string
@@ -118,6 +127,8 @@ func (l *Lexer) Lex() []Token {
 			l.lexNumber()
 		case unicode.IsLetter(rune(ch)):
 			l.lexIdentifier()
+		case ch == '"':
+			l.lexString()
 		case ch == '+':
 			l.addToken(TokenPlus, "+")
 		case ch == '-':
@@ -127,26 +138,24 @@ func (l *Lexer) Lex() []Token {
 		case ch == '/':
 			l.addToken(TokenDiv, "/")
 		case ch == '=':
-			l.addToken(TokenAssign, "=")
-		case ch == ';':
-			l.addToken(TokenSemicolon, ";")
-		case ch == '(':
-			l.addToken(TokenLParen, "(")
-		case ch == ')':
-			l.addToken(TokenRParen, ")")
-		case ch == ',':
-			l.addToken(TokenComma, ",")
-		case ch == '>':
-			l.addToken(TokenGT, ">")
-		case ch == '<':
-			l.addToken(TokenLT, "<")
-		case ch == '=':
 			if l.peekChar() == '=' {
 				l.pos++
 				l.addToken(TokenEQ, "==")
 			} else {
 				l.addToken(TokenAssign, "=")
 			}
+		case ch == '>':
+			l.addToken(TokenGT, ">")
+		case ch == '<':
+			l.addToken(TokenLT, "<")
+		case ch == ',':
+			l.addToken(TokenComma, ",")
+		case ch == ';':
+			l.addToken(TokenSemicolon, ";")
+		case ch == '(':
+			l.addToken(TokenLParen, "(")
+		case ch == ')':
+			l.addToken(TokenRParen, ")")
 		default:
 			panic(fmt.Sprintf("unexpected character: %c", ch))
 		}
@@ -158,6 +167,17 @@ func (l *Lexer) Lex() []Token {
 func (l *Lexer) addToken(tt TokenType, val string) {
 	l.tokens = append(l.tokens, Token{Type: tt, Value: val})
 	l.pos += len(val)
+}
+
+func (l *Lexer) lexString() {
+	l.pos++ // skip opening "
+	start := l.pos
+	for l.pos < len(l.input) && l.input[l.pos] != '"' {
+		l.pos++
+	}
+	str := l.input[start:l.pos]
+	l.pos++ // skip closing "
+	l.tokens = append(l.tokens, Token{Type: TokenString, Value: str})
 }
 
 func (l *Lexer) lexNumber() {
@@ -238,7 +258,7 @@ func (p *Parser) parseStmt() Stmt {
 	} else if tok.Type == TokenWhile {
 		return p.parseWhile()
 	} else {
-		panic("unexpected statement")
+		return &ExprStmt{Expr: p.parseExpr()}
 	}
 }
 
@@ -369,6 +389,9 @@ func (p *Parser) parsePrimary() Expr {
 		p.pos++
 		val, _ := strconv.ParseFloat(tok.Value, 64)
 		return &NumberExpr{Value: val}
+	case TokenString:
+		p.pos++
+		return &StringExpr{Value: tok.Value}
 	case TokenIdentifier:
 		name := tok.Value
 		p.pos++

@@ -1,13 +1,13 @@
 package codegen
 
 import (
+	"lua_llvm/parser"
+
 	"github.com/llir/llvm/ir"
 	"github.com/llir/llvm/ir/constant"
 	"github.com/llir/llvm/ir/enum"
-
 	"github.com/llir/llvm/ir/types"
 	"github.com/llir/llvm/ir/value"
-	"lua_llvm/parser"
 )
 
 // CodeGen struct
@@ -33,9 +33,40 @@ func NewCodeGen() *CodeGen {
 	return &CodeGen{module: m, vars: make(map[string]*ir.InstAlloca), functions: make(map[string]*ir.Func), printf: printf, globalFmt: globalFmt}
 }
 
+func (cg *CodeGen) getExprType(expr parser.Expr) types.Type {
+	switch expr.(type) {
+	case *parser.NumberExpr:
+		return types.Double
+	case *parser.StringExpr:
+		return types.NewPointer(types.I8)
+	case *parser.VarExpr:
+		return types.Double // assuming variables are double
+	case *parser.BinaryExpr:
+		return types.Double // assuming numeric operations
+	case *parser.CallExpr:
+		if ce, ok := expr.(*parser.CallExpr); ok {
+			f, ok := cg.functions[ce.Callee]
+			if !ok {
+				panic("undefined function: " + ce.Callee)
+			}
+			return f.Sig.RetType
+		}
+	}
+	panic("unknown expression type")
+}
+
+func (cg *CodeGen) getReturnType(body []parser.Stmt) types.Type {
+	for _, stmt := range body {
+		if r, ok := stmt.(*parser.ReturnStmt); ok {
+			return cg.getExprType(r.Expr)
+		}
+	}
+	return types.Void
+}
+
 // Generate generates LLVM IR for the given statements
 func (cg *CodeGen) Generate(stmts []parser.Stmt) *ir.Module {
-	main := cg.module.NewFunc("main", types.I32)
+	main := cg.module.NewFunc("lua_main", types.I32)
 	entry := main.NewBlock("entry")
 
 	for _, stmt := range stmts {
@@ -56,7 +87,8 @@ func (cg *CodeGen) genFunction(s *parser.FunctionStmt) {
 	for _, paramName := range s.Params {
 		paramList = append(paramList, ir.NewParam(paramName, types.Double))
 	}
-	f := cg.module.NewFunc(s.Name, types.Double, paramList...)
+	rt := cg.getReturnType(s.Body)
+	f := cg.module.NewFunc(s.Name, rt, paramList...)
 	entry := f.NewBlock("entry")
 
 	localVars := make(map[string]*ir.InstAlloca)
@@ -71,12 +103,27 @@ func (cg *CodeGen) genFunction(s *parser.FunctionStmt) {
 
 	hasReturn := false
 	if len(s.Body) > 0 {
-		if _, isReturn := s.Body[len(s.Body)-1].(*parser.ReturnStmt); isReturn {
+		if _, ok := s.Body[len(s.Body)-1].(*parser.ReturnStmt); ok {
 			hasReturn = true
 		}
 	}
 	if !hasReturn {
-		current.NewRet(constant.NewFloat(types.Double, 0))
+		if types.IsVoid(rt) {
+			current.NewRet(nil)
+		} else {
+			var zeroVal value.Value
+			switch typ := rt.(type) {
+			case *types.FloatType:
+				if typ.Kind == types.FloatKindDouble {
+					zeroVal = constant.NewFloat(types.Double, 0)
+				}
+			case *types.PointerType:
+				zeroVal = constant.NewNull(typ)
+			default:
+				panic("unsupported return type for default return")
+			}
+			current.NewRet(zeroVal)
+		}
 	}
 	cg.functions[s.Name] = f
 }
@@ -97,13 +144,29 @@ func (cg *CodeGen) genStmt(bb *ir.Block, stmt parser.Stmt, vars map[string]*ir.I
 		return bb
 	case *parser.PrintStmt:
 		val := cg.genExpr(bb, s.Expr, vars)
-		ptr := bb.NewGetElementPtr(types.NewArray(4, types.I8), cg.globalFmt, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
-		ptr.InBounds = true
-		bb.NewCall(cg.printf, ptr, val)
+		var format *ir.Global
+		var fmtPtr value.Value
+		if val.Type().Equal(types.Double) {
+			format = cg.globalFmt
+			elemType := format.Type().(*types.PointerType).ElemType
+			fmtPtr = bb.NewGetElementPtr(elemType, format, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
+		} else if types.IsPointer(val.Type()) {
+			strFmtStr := constant.NewCharArrayFromString("%s\n\x00")
+			format = cg.module.NewGlobalDef("strfmt", strFmtStr)
+			elemType := format.Type().(*types.PointerType).ElemType
+			fmtPtr = bb.NewGetElementPtr(elemType, format, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
+		} else {
+			panic("unsupported print type")
+		}
+		fmtPtr.(*ir.InstGetElementPtr).InBounds = true
+		bb.NewCall(cg.printf, fmtPtr, val)
 		return bb
 	case *parser.ReturnStmt:
 		val := cg.genExpr(bb, s.Expr, vars)
 		bb.NewRet(val)
+		return bb
+	case *parser.ExprStmt:
+		cg.genExpr(bb, s.Expr, vars) // Generate but ignore result
 		return bb
 	case *parser.IfStmt:
 		condVal := cg.genExpr(bb, s.Cond, vars)
@@ -173,6 +236,13 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]*ir.I
 	switch e := expr.(type) {
 	case *parser.NumberExpr:
 		return constant.NewFloat(types.Double, e.Value)
+	case *parser.StringExpr:
+		strConst := constant.NewCharArrayFromString(e.Value + "\x00")
+		globalStr := cg.module.NewGlobalDef("", strConst)
+		elemType := globalStr.Type().(*types.PointerType).ElemType
+		ptr := bb.NewGetElementPtr(elemType, globalStr, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
+		ptr.InBounds = true
+		return ptr
 	case *parser.VarExpr:
 		alloc, ok := vars[e.Name]
 		if !ok {
