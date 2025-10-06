@@ -137,7 +137,11 @@ func (l *Lexer) Lex() []Token {
 		case ch == '+':
 			l.addToken(TokenPlus, "+")
 		case ch == '-':
-			l.addToken(TokenMinus, "-")
+			if l.peekChar() == '-' {
+				l.lexComment()
+			} else {
+				l.addToken(TokenMinus, "-")
+			}
 		case ch == '*':
 			l.addToken(TokenMul, "*")
 		case ch == '/':
@@ -167,6 +171,31 @@ func (l *Lexer) Lex() []Token {
 	}
 	l.addToken(TokenEOF, "")
 	return l.tokens
+}
+
+func (l *Lexer) lexComment() {
+	l.pos += 2 // skip --
+	if l.input[l.pos] == '[' && l.peekChar() == '[' {
+		l.pos += 2 // skip [[
+		for l.pos < len(l.input) {
+			if l.pos+1 < len(l.input) && l.input[l.pos] == ']' && l.input[l.pos+1] == ']' {
+				l.pos += 2
+				return
+			}
+			l.pos++
+		}
+	} else {
+		for l.pos < len(l.input) && l.input[l.pos] != '\n' {
+			l.pos++
+		}
+	}
+}
+
+func (l *Lexer) peekNextChar() byte {
+	if l.pos+2 < len(l.input) {
+		return l.input[l.pos+2]
+	}
+	return 0
 }
 
 func (l *Lexer) addToken(tt TokenType, val string) {
