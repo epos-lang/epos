@@ -10,25 +10,27 @@
     flake-utils.lib.eachDefaultSystem (system:
       let pkgs = import nixpkgs { inherit system; };
       in {
-
-        # Add pkgs.buildGoPackage
-        packages.default = pkgs.stdenv.mkDerivation {
+        packages.default = pkgs.buildGoModule {
           pname = "lua_llvm";
           version = "0.0.1";
           src = ./.;
 
-          buildInputs = with pkgs; [ go llvm clang ];
-
-          buildPhase = ''
+          vendorHash = "sha256-Pz5JhdYP8ckJ2dLiN3jDJWIL/egoCgCyi8CducyY41Y=";
+          doCheck = false;
+          buildFlagsArray = [ "-ldflags=-s -w" ];
+          buildInputs = with pkgs; [ go_1_25 llvm clang ];
+          nativeBuildInputs = with pkgs; [ makeWrapper ];
+          installPhase = ''
             mkdir -p $out/bin
-            ${pkgs.go}/bin/go build ./cmd -o $out/bin/lua_llvm
+            export HOME=$(pwd)
+            ${pkgs.go_1_25}/bin/go build -o $out/bin/lua_llvm ${self}/cmd/main.go
           '';
         };
 
         devShells.default = pkgs.mkShell {
-          packages = with pkgs; [ go llvm clang ];
+          packages = with pkgs; [ go_1_25 llvm clang ];
           shellHook = ''
-            #echo ""
+            echo "Run './result/bin/lua_llvm *lua_file* -o *output_file*'"
           '';
         };
       });
