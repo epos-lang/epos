@@ -1,5 +1,5 @@
 {
-  description = "Lua LLVM";
+  description = "Lua LLVM Compiler";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -18,12 +18,14 @@
           vendorHash = "sha256-Pz5JhdYP8ckJ2dLiN3jDJWIL/egoCgCyi8CducyY41Y=";
           doCheck = false;
           buildFlagsArray = [ "-ldflags=-s -w" ];
-          buildInputs = with pkgs; [ go_1_25 llvm clang ];
+          buildInputs = with pkgs; [ go_1_25 ];
           nativeBuildInputs = with pkgs; [ makeWrapper ];
           installPhase = ''
             mkdir -p $out/bin
             export HOME=$(pwd)
             ${pkgs.go_1_25}/bin/go build -o $out/bin/lua_llvm ${self}/cmd/main.go
+            wrapProgram $out/bin/lua_llvm \
+              --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.llvm pkgs.clang ]}
           '';
         };
 
