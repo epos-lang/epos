@@ -1,5 +1,5 @@
-function Hello()
-	print("Hello World!")
+function hello()
+	return "Hello World!"
 end
 
-Hello()
+print(hello())
