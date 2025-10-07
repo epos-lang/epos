@@ -15,7 +15,7 @@
           version = "0.0.1";
           src = ./.;
 
-          vendorHash = "sha256-Pz5JhdYP8ckJ2dLiN3jDJWIL/egoCgCyi8CducyY41Y=";
+          vendorHash = "sha256-e/xsyLXXU4sdWFiyTLTxYodCEex9GCFYuPuWG97AGHc=";
           doCheck = false;
           buildFlagsArray = [ "-ldflags=-s -w" ];
           buildInputs = with pkgs; [ go_1_25 ];
