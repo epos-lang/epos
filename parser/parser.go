@@ -186,6 +186,8 @@ func (l *Lexer) Lex() []Token {
 			l.addToken(TokenComma, ",")
 		case ch == ';':
 			l.addToken(TokenSemicolon, ";")
+		case ch == '_':
+			l.addToken(TokenDefault, "_")
 		case ch == '(':
 			l.addToken(TokenLParen, "(")
 		case ch == ')':
@@ -279,8 +281,7 @@ func (l *Lexer) lexIdentifier() {
 		l.tokens = append(l.tokens, Token{Type: TokenDo, Value: id})
 	} else if id == "match" {
 		l.tokens = append(l.tokens, Token{Type: TokenMatch, Value: id})
-	} else if id == "default" {
-		l.tokens = append(l.tokens, Token{Type: TokenDefault, Value: id})
+
 	} else if id == "true" {
 		l.tokens = append(l.tokens, Token{Type: TokenTrue, Value: id})
 	} else if id == "false" {

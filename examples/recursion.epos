@@ -2,8 +2,6 @@ fn fact(n)
   result = match n == 0 then
     true -> 1
     false -> n * fact(n - 1)
-    -- Fix this so that match don't need default (also change default to _)
-    default -> 0
   end
   result
 end

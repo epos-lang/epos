@@ -454,10 +454,11 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 			}
 			defaultEnd.NewStore(defaultVal, resultAlloc)
 		} else {
-			// Assume there is default
-			panic("match expression without default")
+			defaultEnd = defaultBB
 		}
 		if defaultEnd.Term == nil {
+			defaultEnd.NewBr(contBB)
+		} else {
 			defaultEnd.NewBr(contBB)
 		}
 		if len(e.Cases) == 0 {
