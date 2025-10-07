@@ -1,4 +1,4 @@
-module lua_llvm
+module epos
 
 go 1.24.4
 

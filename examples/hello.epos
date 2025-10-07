@@ -6,7 +6,7 @@
 --]]
 
 fn hello()
-	return "Hello World!"
+	"Hello World!"
 end
 
 print(hello())

@@ -2,19 +2,18 @@ package main
 
 import (
 	"bytes"
+	"epos/codegen"
+	"epos/parser"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-
-	"lua_llvm/codegen"
-	"lua_llvm/parser"
 )
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Println("Usage: lua_llvm <input.lua> [-o output]")
+		fmt.Println("Usage: epos <input.lua> [-o output]")
 		os.Exit(1)
 	}
 

@@ -1,25 +1,21 @@
-# lua_llvm
-_A LLVM compiler for Lua written Go_
+# Epos
+_The programming language of epic poetry_
 
-## Notes:
-- This is WIP
-- I'm not a fan of starting counting at 1 so this starts at 0
-- Currently, it does not have for loops (only while)
-- It has nested multi-line comments by default
-- The `function` keyword has been shortened to `fn`
-- The `local` keyword is not supported
-- I added a `match` statement (example:
-```lua
-match num then
-  1, 2, 3, 4, 5 -> print("1-5")
-  6, 7, 8, 9, 10 -> print("6-10")
-  default -> print("default")
-end
-```
+Epos draws inspiration from [Lua](https://www.lua.org/), [Nim](https://nim-lang.org/), [Elixir](https://elixir-lang.org/), [Gleam](https://gleam.run/), and [Rust](https://www.rust-lang.org/).
+
+Epos compiles to LLVM IR and is written in Go.
+
+> NOTE: The Epos compiler requires Nix to build.
 
 ## Setup
 - Run `nix build`
 
 ## Command to run
-- Run `./result/bin/lua_llvm ./examples/hello.lua`
+- Run `./result/bin/epos ./examples/hello.epos`
 - Run `./build/hello`
+
+## Notes/TODO:
+- This is WIP
+- Add static typing
+- Eventually add macros
+- Add stdlib

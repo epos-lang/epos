@@ -1,0 +1,21 @@
+fn fact(n)
+	--[[if n == 0 then
+		return 1
+	else
+		return n * fact(n - 1)
+	end
+--]]
+  --[[match n == 0 then
+    true -> return 1
+    false -> return n * fact(n - 1)
+  end
+  --]]
+  result = 0
+  match n == 0 then
+    true -> result = 1
+    false -> result = n * fact(n - 1)
+  end
+  result
+end
+
+print(fact(5))

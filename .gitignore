@@ -1,6 +1,3 @@
-out
-out.s
-out.ll
 result
 build
 
@@ -8,4 +5,3 @@ opencode.nix
 package.json
 package-lock.json
 node_modules
-llm

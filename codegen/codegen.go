@@ -1,8 +1,8 @@
 package codegen
 
 import (
+	"epos/parser"
 	"fmt"
-	"lua_llvm/parser"
 
 	"github.com/llir/llvm/ir"
 	"github.com/llir/llvm/ir/constant"
@@ -13,12 +13,15 @@ import (
 
 // CodeGen struct
 type CodeGen struct {
-	module    *ir.Module
-	vars      map[string]*ir.InstAlloca
-	functions map[string]*ir.Func
-	printf    *ir.Func
-	globalFmt *ir.Global
-	strFmt    *ir.Global
+	module       *ir.Module
+	vars         map[string]*ir.InstAlloca
+	functions    map[string]*ir.Func
+	printf       *ir.Func
+	globalFmt    *ir.Global
+	strFmt       *ir.Global
+	ifCounter    int
+	whileCounter int
+	matchCounter int
 }
 
 // NewCodeGen creates a new CodeGen
@@ -34,7 +37,7 @@ func NewCodeGen() *CodeGen {
 	strFmtStr := constant.NewCharArrayFromString("%s\n" + "\x00\x00\x00\x00")
 	strFmt := m.NewGlobalDef("strfmt", strFmtStr)
 
-	return &CodeGen{module: m, vars: make(map[string]*ir.InstAlloca), functions: make(map[string]*ir.Func), printf: printf, globalFmt: globalFmt, strFmt: strFmt}
+	return &CodeGen{module: m, vars: make(map[string]*ir.InstAlloca), functions: make(map[string]*ir.Func), printf: printf, globalFmt: globalFmt, strFmt: strFmt, ifCounter: 0, whileCounter: 0, matchCounter: 0}
 }
 
 func (cg *CodeGen) findReturnType(stmts []parser.Stmt) types.Type {
@@ -62,23 +65,31 @@ func (cg *CodeGen) findReturnType(stmts []parser.Stmt) types.Type {
 }
 
 func (cg *CodeGen) getExprType(expr parser.Expr) types.Type {
-	switch expr.(type) {
+	switch e := expr.(type) {
 	case *parser.NumberExpr:
 		return types.Double
 	case *parser.StringExpr:
 		return types.NewPointer(types.I8)
+	case *parser.MatchExpr:
+		if e.Default != nil {
+			return cg.getExprType(e.Default)
+		} else if len(e.Cases) > 0 {
+			return cg.getExprType(e.Cases[0].Body)
+		}
+		return types.Void
 	case *parser.VarExpr:
 		return types.Double // assuming variables are double
 	case *parser.BinaryExpr:
 		return types.Double // assuming numeric operations
 	case *parser.CallExpr:
-		if ce, ok := expr.(*parser.CallExpr); ok {
-			f, ok := cg.functions[ce.Callee]
-			if !ok {
-				panic("undefined function: " + ce.Callee)
-			}
-			return f.Sig.RetType
+		if e.Callee == "print" {
+			return types.Double
 		}
+		f, ok := cg.functions[e.Callee]
+		if !ok {
+			panic("undefined function: " + e.Callee)
+		}
+		return f.Sig.RetType
 	}
 	panic("unknown expression type")
 }
@@ -155,44 +166,33 @@ func (cg *CodeGen) genFunction(s *parser.FunctionStmt) {
 func (cg *CodeGen) genStmt(bb *ir.Block, stmt parser.Stmt, vars map[string]*ir.InstAlloca) *ir.Block {
 	switch s := stmt.(type) {
 	case *parser.AssignStmt:
-		val := cg.genExpr(bb, s.Expr, vars)
+		val, bb := cg.genExpr(bb, s.Expr, vars)
+		typ := val.Type()
 		var alloc *ir.InstAlloca
 		if a, ok := vars[s.Var]; ok {
+			if !a.Typ.ElemType.Equal(typ) {
+				panic("type mismatch in assignment")
+			}
 			alloc = a
 		} else {
-			alloc = bb.NewAlloca(types.Double)
+			alloc = bb.NewAlloca(typ)
 			alloc.Align = 8
 			vars[s.Var] = alloc
 		}
 		bb.NewStore(val, alloc)
 		return bb
-	case *parser.PrintStmt:
-		val := cg.genExpr(bb, s.Expr, vars)
-		var format *ir.Global
-		var fmtPtr value.Value
-		if val.Type().Equal(types.Double) {
-			format = cg.globalFmt
-			elemType := format.Type().(*types.PointerType).ElemType
-			fmtPtr = bb.NewGetElementPtr(elemType, format, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
-		} else if types.IsPointer(val.Type()) {
-			format = cg.strFmt
-			elemType := format.Type().(*types.PointerType).ElemType
-			fmtPtr = bb.NewGetElementPtr(elemType, format, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
-		} else {
-			panic("unsupported print type")
-		}
-		fmtPtr.(*ir.InstGetElementPtr).InBounds = true
-		bb.NewCall(cg.printf, fmtPtr, val)
-		return bb
+
 	case *parser.ReturnStmt:
-		val := cg.genExpr(bb, s.Expr, vars)
+		val, bb := cg.genExpr(bb, s.Expr, vars)
 		bb.NewRet(val)
 		return bb
 	case *parser.ExprStmt:
-		cg.genExpr(bb, s.Expr, vars) // Generate but ignore result
+		_, bb = cg.genExpr(bb, s.Expr, vars) // Generate but ignore result
 		return bb
 	case *parser.IfStmt:
-		condVal := cg.genExpr(bb, s.Cond, vars)
+		cg.ifCounter++
+		id := cg.ifCounter
+		condVal, bb := cg.genExpr(bb, s.Cond, vars)
 		condTyp := condVal.Type()
 		var cond value.Value
 		if condTyp.Equal(types.I1) {
@@ -204,9 +204,9 @@ func (cg *CodeGen) genStmt(bb *ir.Block, stmt parser.Stmt, vars map[string]*ir.I
 			panic("invalid condition type")
 		}
 
-		thenBB := bb.Parent.NewBlock("then")
-		elseBB := bb.Parent.NewBlock("else")
-		mergeBB := bb.Parent.NewBlock("merge")
+		thenBB := bb.Parent.NewBlock(fmt.Sprintf("if_then_%d", id))
+		elseBB := bb.Parent.NewBlock(fmt.Sprintf("if_else_%d", id))
+		mergeBB := bb.Parent.NewBlock(fmt.Sprintf("if_merge_%d", id))
 
 		bb.NewCondBr(cond, thenBB, elseBB)
 
@@ -222,13 +222,15 @@ func (cg *CodeGen) genStmt(bb *ir.Block, stmt parser.Stmt, vars map[string]*ir.I
 
 		return mergeBB
 	case *parser.WhileStmt:
-		condBB := bb.Parent.NewBlock("cond")
-		bodyBB := bb.Parent.NewBlock("body")
-		exitBB := bb.Parent.NewBlock("exit")
+		cg.whileCounter++
+		id := cg.whileCounter
+		condBB := bb.Parent.NewBlock(fmt.Sprintf("while_cond_%d", id))
+		bodyBB := bb.Parent.NewBlock(fmt.Sprintf("while_body_%d", id))
+		exitBB := bb.Parent.NewBlock(fmt.Sprintf("while_exit_%d", id))
 
 		bb.NewBr(condBB)
 
-		condVal := cg.genExpr(condBB, s.Cond, vars)
+		condVal, condBB := cg.genExpr(condBB, s.Cond, vars)
 		condTyp := condVal.Type()
 		var cond value.Value
 		if condTyp.Equal(types.I1) {
@@ -249,27 +251,29 @@ func (cg *CodeGen) genStmt(bb *ir.Block, stmt parser.Stmt, vars map[string]*ir.I
 
 		return exitBB
 	case *parser.MatchStmt:
-		val := cg.genExpr(bb, s.Expr, vars)
-		mergeBB := bb.Parent.NewBlock("match_merge")
-		defaultBB := bb.Parent.NewBlock("match_default")
+		cg.matchCounter++
+		id := cg.matchCounter
+		val, bb := cg.genExpr(bb, s.Expr, vars)
+		mergeBB := bb.Parent.NewBlock(fmt.Sprintf("match_merge_%d", id))
+		defaultBB := bb.Parent.NewBlock(fmt.Sprintf("match_default_%d", id))
 		current := bb
 		for i, cas := range s.Cases {
-			caseBodyBB := bb.Parent.NewBlock(fmt.Sprintf("match_case_%d", i))
+			caseBodyBB := bb.Parent.NewBlock(fmt.Sprintf("match_case_%d_%d", id, i))
 			condCurrent := current
 			var next *ir.Block
 			if i+1 < len(s.Cases) {
-				next = bb.Parent.NewBlock(fmt.Sprintf("match_next_%d", i+1))
+				next = bb.Parent.NewBlock(fmt.Sprintf("match_next_%d_%d", id, i+1))
 			} else {
 				next = defaultBB
 			}
 			for j, v := range cas.Values {
-				vConst := cg.genExpr(condCurrent, v, vars)
+				vConst, condCurrent := cg.genExpr(condCurrent, v, vars)
 				cmp := condCurrent.NewFCmp(enum.FPredOEQ, val, vConst)
 				isLast := j == len(cas.Values)-1
 				if isLast {
 					condCurrent.NewCondBr(cmp, caseBodyBB, next)
 				} else {
-					orNext := bb.Parent.NewBlock(fmt.Sprintf("match_or_%d_%d", i, j))
+					orNext := bb.Parent.NewBlock(fmt.Sprintf("match_or_%d_%d_%d", id, i, j))
 					condCurrent.NewCondBr(cmp, caseBodyBB, orNext)
 					condCurrent = orNext
 				}
@@ -306,62 +310,157 @@ func (cg *CodeGen) genStmts(bb *ir.Block, stmts []parser.Stmt, vars map[string]*
 	return current
 }
 
-func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]*ir.InstAlloca) value.Value {
+func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]*ir.InstAlloca) (value.Value, *ir.Block) {
 	switch e := expr.(type) {
 	case *parser.NumberExpr:
-		return constant.NewFloat(types.Double, e.Value)
+		return constant.NewFloat(types.Double, e.Value), bb
 	case *parser.StringExpr:
-		strConst := constant.NewCharArrayFromString(e.Value + "\x00\x00\x00\x00")
+		strConst := constant.NewCharArrayFromString(e.Value + "\\x00\\x00\\x00\\x00")
 		globalStr := cg.module.NewGlobalDef("", strConst)
 		elemType := globalStr.Type().(*types.PointerType).ElemType
 		ptr := bb.NewGetElementPtr(elemType, globalStr, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
 		ptr.InBounds = true
-		return ptr
+		return ptr, bb
 	case *parser.VarExpr:
 		alloc, ok := vars[e.Name]
 		if !ok {
 			panic("undefined variable: " + e.Name)
 		}
-		return bb.NewLoad(types.Double, alloc)
+		return bb.NewLoad(types.Double, alloc), bb
 	case *parser.UnaryExpr:
 		if e.Op == parser.TokenMinus {
 			zero := constant.NewFloat(types.Double, 0)
-			operand := cg.genExpr(bb, e.Expr, vars)
-			return bb.NewFSub(zero, operand)
+			operand, bb := cg.genExpr(bb, e.Expr, vars)
+			return bb.NewFSub(zero, operand), bb
 		}
 		panic("unknown unary operator")
+		return nil, nil
 	case *parser.BinaryExpr:
-		left := cg.genExpr(bb, e.Left, vars)
-		right := cg.genExpr(bb, e.Right, vars)
+		left, bb := cg.genExpr(bb, e.Left, vars)
+		right, bb := cg.genExpr(bb, e.Right, vars)
 		switch e.Op {
 		case parser.TokenPlus:
-			return bb.NewFAdd(left, right)
+			return bb.NewFAdd(left, right), bb
 		case parser.TokenMinus:
-			return bb.NewFSub(left, right)
+			return bb.NewFSub(left, right), bb
 		case parser.TokenMul:
-			return bb.NewFMul(left, right)
+			return bb.NewFMul(left, right), bb
 		case parser.TokenDiv:
-			return bb.NewFDiv(left, right)
+			return bb.NewFDiv(left, right), bb
 		case parser.TokenGT:
-			return bb.NewFCmp(enum.FPredOGT, left, right)
+			cmp := bb.NewFCmp(enum.FPredOGT, left, right)
+			return bb.NewSelect(cmp, constant.NewFloat(types.Double, 1), constant.NewFloat(types.Double, 0)), bb
 		case parser.TokenLT:
-			return bb.NewFCmp(enum.FPredOLT, left, right)
+			cmp := bb.NewFCmp(enum.FPredOLT, left, right)
+			return bb.NewSelect(cmp, constant.NewFloat(types.Double, 1), constant.NewFloat(types.Double, 0)), bb
 		case parser.TokenEQ:
-			return bb.NewFCmp(enum.FPredOEQ, left, right)
+			cmp := bb.NewFCmp(enum.FPredOEQ, left, right)
+			return bb.NewSelect(cmp, constant.NewFloat(types.Double, 1), constant.NewFloat(types.Double, 0)), bb
 		default:
 			panic("unknown operator")
+			return nil, nil
 		}
 	case *parser.CallExpr:
-		f, ok := cg.functions[e.Callee]
-		if !ok {
-			panic("undefined function: " + e.Callee)
+		if e.Callee == "print" {
+			if len(e.Args) != 1 {
+				panic("print takes one argument")
+			}
+			val, bb := cg.genExpr(bb, e.Args[0], vars)
+			_ = bb
+			if val.Type().Equal(types.I1) {
+				val = bb.NewSelect(val, constant.NewFloat(types.Double, 1), constant.NewFloat(types.Double, 0))
+			}
+			var format *ir.Global
+			var fmtPtr value.Value
+			if val.Type().Equal(types.Double) {
+				format = cg.globalFmt
+				elemType := format.Type().(*types.PointerType).ElemType
+				fmtPtr = bb.NewGetElementPtr(elemType, format, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
+			} else if types.IsPointer(val.Type()) {
+				format = cg.strFmt
+				elemType := format.Type().(*types.PointerType).ElemType
+				fmtPtr = bb.NewGetElementPtr(elemType, format, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
+			} else {
+				panic(fmt.Sprintf("unsupported print type in block %p", bb))
+			}
+			fmtPtr.(*ir.InstGetElementPtr).InBounds = true
+			bb.NewCall(cg.printf, fmtPtr, val)
+			return constant.NewFloat(types.Double, 0), bb
+		} else {
+			f, ok := cg.functions[e.Callee]
+			if !ok {
+				panic("undefined function: " + e.Callee)
+			}
+			var args []value.Value
+			currentBB := bb
+			for _, arg := range e.Args {
+				var argVal value.Value
+				argVal, currentBB = cg.genExpr(currentBB, arg, vars)
+				args = append(args, argVal)
+			}
+			return currentBB.NewCall(f, args...), currentBB
 		}
-		var args []value.Value
-		for _, arg := range e.Args {
-			args = append(args, cg.genExpr(bb, arg, vars))
+	case *parser.MatchExpr:
+		cg.matchCounter++
+		id := cg.matchCounter
+		val, bb := cg.genExpr(bb, e.Expr, vars)
+		resultType := cg.getExprType(e)
+		resultAlloc := bb.NewAlloca(resultType)
+		resultAlloc.Align = 8
+		contBB := bb.Parent.NewBlock(fmt.Sprintf("match_cont_%d", id))
+		defaultBB := bb.Parent.NewBlock(fmt.Sprintf("match_default_%d", id))
+		current := bb
+		for i, cas := range e.Cases {
+			caseBodyBB := bb.Parent.NewBlock(fmt.Sprintf("match_case_%d_%d", id, i))
+			condCurrent := current
+			var next *ir.Block
+			if i+1 < len(e.Cases) {
+				next = bb.Parent.NewBlock(fmt.Sprintf("match_next_%d_%d", id, i+1))
+			} else {
+				next = defaultBB
+			}
+			var cond value.Value
+			for j, v := range cas.Values {
+				vConst, condCurrent := cg.genExpr(condCurrent, v, vars)
+				cmp := condCurrent.NewFCmp(enum.FPredOEQ, val, vConst)
+				if j == 0 {
+					cond = cmp
+				} else {
+					cond = condCurrent.NewOr(cond, cmp)
+				}
+			}
+			condCurrent.NewCondBr(cond, caseBodyBB, next)
+			bodyVal, bodyEnd := cg.genExpr(caseBodyBB, cas.Body, vars)
+			if bodyEnd.Term != nil {
+				panic("control flow in match case body")
+			}
+			bodyEnd.NewStore(bodyVal, resultAlloc)
+			bodyEnd.NewBr(contBB)
+			current = next
 		}
-		return bb.NewCall(f, args...)
+		var defaultEnd *ir.Block
+		if e.Default != nil {
+			defaultVal, defaultEnd := cg.genExpr(defaultBB, e.Default, vars)
+			if defaultEnd.Term != nil {
+				panic("control flow in match default body")
+			}
+			defaultEnd.NewStore(defaultVal, resultAlloc)
+		} else {
+			// Assume there is default
+			panic("match expression without default")
+		}
+		if defaultEnd.Term == nil {
+			defaultEnd.NewBr(contBB)
+		}
+		if len(e.Cases) == 0 {
+			bb.NewBr(defaultBB)
+		}
+		postBB := contBB.Parent.NewBlock(fmt.Sprintf("match_post_%d", id))
+		contBB.NewBr(postBB)
+		load := postBB.NewLoad(resultType, resultAlloc)
+		return load, postBB
 	default:
 		panic("unknown expression type")
+		return nil, nil
 	}
 }

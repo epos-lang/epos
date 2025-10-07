@@ -18,7 +18,7 @@ const (
 	TokenMul
 	TokenDiv
 	TokenAssign
-	TokenPrint
+
 	TokenSemicolon
 	TokenLParen
 	TokenRParen
@@ -38,6 +38,8 @@ const (
 	TokenMatch
 	TokenDefault
 	TokenArrow
+	TokenTrue
+	TokenFalse
 )
 
 // Token struct
@@ -72,10 +74,6 @@ type Stmt interface{}
 
 type AssignStmt struct {
 	Var  string
-	Expr Expr
-}
-
-type PrintStmt struct {
 	Expr Expr
 }
 
@@ -114,6 +112,17 @@ type MatchStmt struct {
 	Expr    Expr
 	Cases   []MatchCase
 	Default Stmt
+}
+
+type MatchCaseExpr struct {
+	Values []Expr
+	Body   Expr
+}
+
+type MatchExpr struct {
+	Expr    Expr
+	Cases   []MatchCaseExpr
+	Default Expr
 }
 
 type StringExpr struct {
@@ -252,9 +261,7 @@ func (l *Lexer) lexIdentifier() {
 		l.pos++
 	}
 	id := l.input[start:l.pos]
-	if id == "print" {
-		l.tokens = append(l.tokens, Token{Type: TokenPrint, Value: id})
-	} else if id == "fn" {
+	if id == "fn" {
 		l.tokens = append(l.tokens, Token{Type: TokenFunction, Value: id})
 	} else if id == "end" {
 		l.tokens = append(l.tokens, Token{Type: TokenEnd, Value: id})
@@ -274,6 +281,10 @@ func (l *Lexer) lexIdentifier() {
 		l.tokens = append(l.tokens, Token{Type: TokenMatch, Value: id})
 	} else if id == "default" {
 		l.tokens = append(l.tokens, Token{Type: TokenDefault, Value: id})
+	} else if id == "true" {
+		l.tokens = append(l.tokens, Token{Type: TokenTrue, Value: id})
+	} else if id == "false" {
+		l.tokens = append(l.tokens, Token{Type: TokenFalse, Value: id})
 	} else {
 		l.tokens = append(l.tokens, Token{Type: TokenIdentifier, Value: id})
 	}
@@ -301,8 +312,6 @@ func (p *Parser) parseStmt() Stmt {
 	tok := p.current()
 	if tok.Type == TokenIdentifier && p.peek().Type == TokenAssign {
 		return p.parseAssign()
-	} else if tok.Type == TokenPrint {
-		return p.parsePrint()
 	} else if tok.Type == TokenFunction {
 		return p.parseFunction()
 	} else if tok.Type == TokenReturn {
@@ -325,12 +334,6 @@ func (p *Parser) parseAssign() *AssignStmt {
 	return &AssignStmt{Var: varName, Expr: expr}
 }
 
-func (p *Parser) parsePrint() *PrintStmt {
-	p.consume(TokenPrint)
-	expr := p.parseExpr()
-	return &PrintStmt{Expr: expr}
-}
-
 func (p *Parser) parseFunction() *FunctionStmt {
 	p.consume(TokenFunction)
 	name := p.consume(TokenIdentifier).Value
@@ -349,6 +352,11 @@ func (p *Parser) parseFunction() *FunctionStmt {
 		body = append(body, p.parseStmt())
 	}
 	p.consume(TokenEnd)
+	if len(body) > 0 {
+		if exprStmt, ok := body[len(body)-1].(*ExprStmt); ok {
+			body[len(body)-1] = &ReturnStmt{Expr: exprStmt.Expr}
+		}
+	}
 	return &FunctionStmt{Name: name, Params: params, Body: body}
 }
 
@@ -478,6 +486,32 @@ func (p *Parser) parseUnary() Expr {
 func (p *Parser) parsePrimary() Expr {
 	tok := p.current()
 	switch tok.Type {
+	case TokenMatch:
+		p.pos++
+		expr := p.parseExpr()
+		p.consume(TokenThen)
+		var cases []MatchCaseExpr
+		var defaultExpr Expr
+		for p.current().Type != TokenEnd {
+			if p.current().Type == TokenDefault {
+				p.consume(TokenDefault)
+				p.consume(TokenArrow)
+				defaultExpr = p.parseExpr()
+				break
+			} else {
+				var values []Expr
+				values = append(values, p.parseExpr())
+				for p.current().Type == TokenComma {
+					p.pos++
+					values = append(values, p.parseExpr())
+				}
+				p.consume(TokenArrow)
+				body := p.parseExpr()
+				cases = append(cases, MatchCaseExpr{Values: values, Body: body})
+			}
+		}
+		p.consume(TokenEnd)
+		return &MatchExpr{Expr: expr, Cases: cases, Default: defaultExpr}
 	case TokenNumber:
 		p.pos++
 		val, _ := strconv.ParseFloat(tok.Value, 64)
@@ -485,6 +519,12 @@ func (p *Parser) parsePrimary() Expr {
 	case TokenString:
 		p.pos++
 		return &StringExpr{Value: tok.Value}
+	case TokenTrue:
+		p.pos++
+		return &NumberExpr{Value: 1.0}
+	case TokenFalse:
+		p.pos++
+		return &NumberExpr{Value: 0.0}
 	case TokenIdentifier:
 		name := tok.Value
 		p.pos++

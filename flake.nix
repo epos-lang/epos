@@ -1,5 +1,5 @@
 {
-  description = "Lua LLVM Compiler";
+  description = "Epos Compiler";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -11,7 +11,7 @@
       let pkgs = import nixpkgs { inherit system; };
       in {
         packages.default = pkgs.buildGoModule {
-          pname = "lua_llvm";
+          pname = "epos";
           version = "0.0.1";
           src = ./.;
 
@@ -23,8 +23,8 @@
           installPhase = ''
             mkdir -p $out/bin
             export HOME=$(pwd)
-            ${pkgs.go_1_25}/bin/go build -o $out/bin/lua_llvm ${self}/cmd/main.go
-            wrapProgram $out/bin/lua_llvm \
+            ${pkgs.go_1_25}/bin/go build -o $out/bin/epos ${self}/cmd/main.go
+            wrapProgram $out/bin/epos \
               --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.llvm pkgs.clang ]}
           '';
         };
@@ -32,7 +32,7 @@
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [ go_1_25 llvm clang ];
           shellHook = ''
-            echo "Run './result/bin/lua_llvm *lua_file* -o *output_file*'"
+            echo "Run './result/bin/epos *epos_file* -o *output_file*'"
           '';
         };
       });
