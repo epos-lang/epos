@@ -1,19 +1,9 @@
 fn fact(n)
-	--[[if n == 0 then
-		return 1
-	else
-		return n * fact(n - 1)
-	end
---]]
-  --[[match n == 0 then
-    true -> return 1
-    false -> return n * fact(n - 1)
-  end
-  --]]
-  result = 0
-  match n == 0 then
-    true -> result = 1
-    false -> result = n * fact(n - 1)
+  result = match n == 0 then
+    true -> 1
+    false -> n * fact(n - 1)
+    -- Fix this so that match don't need default (also change default to _)
+    default -> 0
   end
   result
 end

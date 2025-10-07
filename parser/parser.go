@@ -360,18 +360,6 @@ func (p *Parser) parseFunction() *FunctionStmt {
 	return &FunctionStmt{Name: name, Params: params, Body: body}
 }
 
-func (p *Parser) parseWhile() *WhileStmt {
-	p.consume(TokenWhile)
-	cond := p.parseExpr()
-	p.consume(TokenDo)
-	var body []Stmt
-	for p.current().Type != TokenEnd {
-		body = append(body, p.parseStmt())
-	}
-	p.consume(TokenEnd)
-	return &WhileStmt{Cond: cond, Body: body}
-}
-
 func (p *Parser) parseMatch() *MatchStmt {
 	p.consume(TokenMatch)
 	expr := p.parseExpr()
@@ -398,6 +386,18 @@ func (p *Parser) parseMatch() *MatchStmt {
 	}
 	p.consume(TokenEnd)
 	return &MatchStmt{Expr: expr, Cases: cases, Default: defaultStmt}
+}
+
+func (p *Parser) parseWhile() *WhileStmt {
+	p.consume(TokenWhile)
+	cond := p.parseExpr()
+	p.consume(TokenDo)
+	var body []Stmt
+	for p.current().Type != TokenEnd {
+		body = append(body, p.parseStmt())
+	}
+	p.consume(TokenEnd)
+	return &WhileStmt{Cond: cond, Body: body}
 }
 
 func (p *Parser) parseIf() *IfStmt {
