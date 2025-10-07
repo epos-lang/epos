@@ -1,4 +1,4 @@
-# Language Syntax Features/Rules
+# Epos Language Syntax Features/Rules
 
 - Implicit return for functions
 - Kabab case
@@ -27,9 +27,6 @@
     Multiline comment
   ]#
 ]#
-(#
-  Multiline comment
-#)
 
 fn factorial(n: int): int
   match n == 0 then

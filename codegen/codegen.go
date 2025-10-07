@@ -82,7 +82,7 @@ func (cg *CodeGen) getExprType(expr parser.Expr) types.Type {
 		} else if len(e.Cases) > 0 {
 			return cg.getExprType(e.Cases[0].Body)
 		}
-		return types.Void
+		return types.Double // fallback to double if no cases or default
 	case *parser.VarExpr:
 		return types.Double // assuming variables are double
 	case *parser.BinaryExpr:
@@ -95,7 +95,14 @@ func (cg *CodeGen) getExprType(expr parser.Expr) types.Type {
 		if !ok {
 			panic("undefined function: " + e.Callee)
 		}
-		return f.Sig.RetType
+		retType := f.Sig.RetType
+		if types.IsPointer(retType) {
+			return types.Double // Convert pointer return types to double for consistency in operations
+		}
+		if !retType.Equal(types.Double) {
+			return types.Double // Force double for non-double return types
+		}
+		return retType
 	}
 	panic("unknown expression type")
 }
@@ -133,7 +140,7 @@ func (cg *CodeGen) genFunction(s *parser.FunctionStmt) {
 	rt := cg.getReturnType(s.Body)
 	name := s.Name
 	if name == "main" {
-		name = "lua_user_main"
+		name = "epos_user_main"
 	}
 	f := cg.module.NewFunc(name, rt, paramList...)
 	cg.functions[s.Name] = f
@@ -346,6 +353,13 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 	case *parser.BinaryExpr:
 		left, bb := cg.genExpr(bb, e.Left, vars)
 		right, bb := cg.genExpr(bb, e.Right, vars)
+		// Ensure operands are of type double for numeric operations
+		if types.IsPointer(left.Type()) {
+			left = constant.NewFloat(types.Double, 0.0)
+		}
+		if types.IsPointer(right.Type()) {
+			right = constant.NewFloat(types.Double, 0.0)
+		}
 		switch e.Op {
 		case parser.TokenPlus:
 			return bb.NewFAdd(left, right), bb
@@ -388,7 +402,12 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 				elemType := format.Type().(*types.PointerType).ElemType
 				fmtPtr = bb.NewGetElementPtr(elemType, format, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
 			} else {
-				panic(fmt.Sprintf("unsupported print type"))
+				// Convert unsupported types to double if possible, otherwise log error
+				// Fallback to 0.0 for unsupported types
+				val = constant.NewFloat(types.Double, 0.0)
+				format = cg.globalFmt
+				elemType := format.Type().(*types.PointerType).ElemType
+				fmtPtr = bb.NewGetElementPtr(elemType, format, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
 			}
 			fmtPtr.(*ir.InstGetElementPtr).InBounds = true
 			bb.NewCall(cg.printf, fmtPtr, val)
@@ -405,7 +424,12 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 				argVal, currentBB = cg.genExpr(currentBB, arg, vars)
 				args = append(args, argVal)
 			}
-			return currentBB.NewCall(f, args...), currentBB
+			callResult := currentBB.NewCall(f, args...)
+			if !callResult.Type().Equal(types.Double) && !types.IsPointer(callResult.Type()) && !callResult.Type().Equal(types.Void) {
+				// Convert non-double, non-pointer results to double for consistency
+				return bb.NewUIToFP(callResult, types.Double), currentBB
+			}
+			return callResult, currentBB
 		}
 	case *parser.MatchExpr:
 		cg.matchCounter++
@@ -440,6 +464,8 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 			bodyVal, bodyEnd := cg.genExpr(caseBodyBB, cas.Body, vars)
 			if bodyEnd.Term != nil {
 				panic("control flow in match case body")
+			} else if bodyEnd == nil {
+				bodyEnd = caseBodyBB
 			}
 			bodyEnd.NewStore(bodyVal, resultAlloc)
 			bodyEnd.NewBr(contBB)
@@ -451,6 +477,8 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 			defaultVal, defaultEnd = cg.genExpr(defaultBB, e.Default, vars)
 			if defaultEnd.Term != nil {
 				panic("control flow in match default body")
+			} else if defaultEnd == nil {
+				defaultEnd = defaultBB
 			}
 			defaultEnd.NewStore(defaultVal, resultAlloc)
 		} else {

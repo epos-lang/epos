@@ -1,9 +1,9 @@
--- Hello World in Lua
---[[
-  --[[
+# Hello World in Lua
+#[
+  #[
     Multiline comment can be nested!
-  --]]
---]]
+  ]#
+]#
 
 fn hello()
 	"Hello World!"

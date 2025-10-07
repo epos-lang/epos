@@ -157,13 +157,20 @@ func (l *Lexer) Lex() []Token {
 			l.lexIdentifier()
 		case ch == '"':
 			l.lexString()
+		case ch == '[':
+			if l.peekChar() == '[' {
+				l.lexMultiLineString()
+			} else {
+				// l.addToken(TokenLBracket, "[")
+			}
 		case ch == '+':
 			l.addToken(TokenPlus, "+")
+		case ch == '#':
+			l.lexComment()
+			continue
 		case ch == '-':
 			if l.peekChar() == '>' {
 				l.addToken(TokenArrow, "->")
-			} else if l.peekChar() == '-' {
-				l.lexComment()
 			} else {
 				l.addToken(TokenMinus, "-")
 			}
@@ -201,11 +208,11 @@ func (l *Lexer) Lex() []Token {
 }
 
 func (l *Lexer) lexComment() {
-	l.pos += 2 // skip --
-	if l.input[l.pos] == '[' && l.peekChar() == '[' {
-		l.pos += 2 // skip [[
+	l.pos++ // skip #
+	if l.pos < len(l.input) && l.input[l.pos] == '[' {
+		l.pos++ // skip [
 		for l.pos < len(l.input) {
-			if l.pos+1 < len(l.input) && l.input[l.pos] == ']' && l.input[l.pos+1] == ']' {
+			if l.pos+1 < len(l.input) && l.input[l.pos] == '#' && l.input[l.pos+1] == ']' {
 				l.pos += 2
 				return
 			}
@@ -241,6 +248,20 @@ func (l *Lexer) lexString() {
 	l.tokens = append(l.tokens, Token{Type: TokenString, Value: str})
 }
 
+func (l *Lexer) lexMultiLineString() {
+	l.pos += 2 // skip opening [[
+	start := l.pos
+	for l.pos < len(l.input)-1 {
+		if l.input[l.pos] == ']' && l.input[l.pos+1] == ']' {
+			break
+		}
+		l.pos++
+	}
+	str := l.input[start:l.pos]
+	l.pos += 2 // skip closing ]]
+	l.tokens = append(l.tokens, Token{Type: TokenString, Value: str})
+}
+
 func (l *Lexer) lexNumber() {
 	start := l.pos
 	for l.pos < len(l.input) && unicode.IsDigit(rune(l.input[l.pos])) {
@@ -259,7 +280,7 @@ func (l *Lexer) peekChar() byte {
 
 func (l *Lexer) lexIdentifier() {
 	start := l.pos
-	for l.pos < len(l.input) && (unicode.IsLetter(rune(l.input[l.pos])) || unicode.IsDigit(rune(l.input[l.pos]))) {
+	for l.pos < len(l.input) && (unicode.IsLetter(rune(l.input[l.pos])) || unicode.IsDigit(rune(l.input[l.pos])) || l.input[l.pos] == '-' || l.input[l.pos] == '_') {
 		l.pos++
 	}
 	id := l.input[start:l.pos]
@@ -281,7 +302,6 @@ func (l *Lexer) lexIdentifier() {
 		l.tokens = append(l.tokens, Token{Type: TokenDo, Value: id})
 	} else if id == "match" {
 		l.tokens = append(l.tokens, Token{Type: TokenMatch, Value: id})
-
 	} else if id == "true" {
 		l.tokens = append(l.tokens, Token{Type: TokenTrue, Value: id})
 	} else if id == "false" {
@@ -567,7 +587,7 @@ func (p *Parser) peek() Token {
 func (p *Parser) consume(tt TokenType) Token {
 	tok := p.current()
 	if tok.Type != tt {
-		panic(fmt.Sprintf("expected %d, got %d", tt, tok.Type))
+		panic(fmt.Sprintf("expected token type %d, got %d with value '%s' at position %d", tt, tok.Type, tok.Value, p.pos))
 	}
 	p.pos++
 	return tok

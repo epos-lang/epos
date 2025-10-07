@@ -1,0 +1,7 @@
+fn message()
+	[[This is a multi-line string.
+It spans several lines
+for readability!]]
+end
+
+print(message())
