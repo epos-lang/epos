@@ -47,6 +47,8 @@ const (
 	TokenTypeString
 	TokenTypeList
 	TokenTypeBool
+	TokenLBrace
+	TokenRBrace
 )
 
 // Token struct
@@ -243,6 +245,10 @@ func (l *Lexer) Lex() []Token {
 			l.addToken(TokenRParen, ")")
 		case ch == ']':
 			l.addToken(TokenRBracket, "]")
+		case ch == '{':
+			l.addToken(TokenLBrace, "{")
+		case ch == '}':
+			l.addToken(TokenRBrace, "}")
 		case ch == ':':
 			l.addToken(TokenColon, ":")
 		default:
@@ -638,17 +644,17 @@ func (p *Parser) parsePrimary() Expr {
 		expr := p.parseExpr()
 		p.consume(TokenRParen)
 		return expr
-	case TokenLBracket:
+	case TokenLBrace:
 		p.pos++
 		var elements []Expr
-		if p.current().Type != TokenRBracket {
+		if p.current().Type != TokenRBrace {
 			elements = append(elements, p.parseExpr())
 			for p.current().Type == TokenComma {
 				p.pos++
 				elements = append(elements, p.parseExpr())
 			}
 		}
-		p.consume(TokenRBracket)
+		p.consume(TokenRBrace)
 		return &ListExpr{Elements: elements}
 	default:
 		panic(fmt.Sprintf("unexpected token in primary: %v", tok))
@@ -670,6 +676,9 @@ func (p *Parser) parseType() Type {
 		elem := p.parseType()
 		p.consume(TokenRParen)
 		return ListType{Element: elem}
+	case TokenTypeBool:
+		p.pos++
+		return BasicType("bool")
 	default:
 		panic(fmt.Sprintf("expected type, got %v", tok))
 	}
@@ -763,10 +772,18 @@ func (tc *TypeChecker) typeCheckStmt(stmt Stmt, env map[string]Type) error {
 				if err != nil {
 					return err
 				}
-				if !equalTypes(retTy, s.ReturnType) {
-					return fmt.Errorf("return type mismatch: expected %v, got %v", s.ReturnType, retTy)
+				if s.ReturnType != nil {
+					if !compatible(retTy, s.ReturnType) {
+						return fmt.Errorf("return type mismatch: expected %v, got %v", s.ReturnType, retTy)
+					}
+					resolveTypes(ret.Expr, s.ReturnType)
+					ret.Type = s.ReturnType
+				} else {
+					if isUnresolvedPlaceholder(retTy) {
+						return fmt.Errorf("cannot infer return type for empty list without specified return type")
+					}
+					ret.Type = retTy
 				}
-				ret.Type = retTy
 			}
 		}
 		return nil
@@ -776,10 +793,13 @@ func (tc *TypeChecker) typeCheckStmt(stmt Stmt, env map[string]Type) error {
 			return err
 		}
 		if s.DeclType != nil {
-			if !equalTypes(ty, s.DeclType) {
+			if !compatible(ty, s.DeclType) {
 				return fmt.Errorf("type mismatch: expected %v, got %v", s.DeclType, ty)
 			}
+			resolveTypes(s.Expr, s.DeclType)
 			ty = s.DeclType
+		} else if isUnresolvedPlaceholder(ty) {
+			return fmt.Errorf("cannot infer type for empty list without declaration")
 		}
 		if existing, ok := env[s.Var]; ok {
 			if !equalTypes(existing, ty) {
@@ -970,19 +990,25 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 		}
 	case *ListExpr:
 		if len(e.Elements) == 0 {
-			return nil, fmt.Errorf("cannot infer type of empty list")
+			e.Type = ListType{Element: nil} // Placeholder for empty list
+			return e.Type, nil
 		}
-		elemTy, err := tc.typeCheckExpr(e.Elements[0], env)
-		if err != nil {
-			return nil, err
-		}
-		for _, elem := range e.Elements[1:] {
+		var elemTy Type
+		for i, elem := range e.Elements {
 			ty, err := tc.typeCheckExpr(elem, env)
 			if err != nil {
 				return nil, err
 			}
-			if !equalTypes(ty, elemTy) {
-				return nil, fmt.Errorf("list elements have different types")
+			if i == 0 {
+				elemTy = ty
+			} else {
+				if isPlaceholder(ty) {
+					// ok
+				} else if isPlaceholder(elemTy) {
+					elemTy = ty
+				} else if !equalTypes(ty, elemTy) {
+					return nil, fmt.Errorf("list elements have different types")
+				}
 			}
 		}
 		ty := ListType{Element: elemTy}
@@ -1036,6 +1062,12 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 }
 
 func equalTypes(a, b Type) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
 	switch a1 := a.(type) {
 	case BasicType:
 		if b1, ok := b.(BasicType); ok {
@@ -1047,6 +1079,56 @@ func equalTypes(a, b Type) bool {
 		}
 	}
 	return false
+}
+
+func compatible(a, b Type) bool {
+	if a == nil {
+		return true
+	}
+	if b == nil {
+		return false
+	}
+	switch a1 := a.(type) {
+	case BasicType:
+		b1, ok := b.(BasicType)
+		return ok && a1 == b1
+	case ListType:
+		b1, ok := b.(ListType)
+		return ok && compatible(a1.Element, b1.Element)
+	default:
+		return false
+	}
+}
+
+func isPlaceholder(t Type) bool {
+	if lt, ok := t.(ListType); ok {
+		return lt.Element == nil
+	}
+	return false
+}
+
+func isUnresolvedPlaceholder(t Type) bool {
+	if t == nil {
+		return true
+	}
+	if lt, ok := t.(ListType); ok {
+		if lt.Element == nil {
+			return true
+		}
+		return isUnresolvedPlaceholder(lt.Element)
+	}
+	return false
+}
+
+func resolveTypes(expr Expr, ty Type) {
+	if le, ok := expr.(*ListExpr); ok {
+		le.Type = ty
+		if lt, ok := ty.(ListType); ok {
+			for _, elem := range le.Elements {
+				resolveTypes(elem, lt.Element)
+			}
+		}
+	}
 }
 
 func isNumberOp(op TokenType) bool {

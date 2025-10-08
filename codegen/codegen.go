@@ -39,6 +39,8 @@ func (cg *CodeGen) toLLVMType(t parser.Type) types.Type {
 			return types.I64
 		} else if ty == "string" {
 			return types.NewPointer(types.I8)
+		} else if ty == "bool" {
+			return types.I1
 		}
 	case parser.ListType:
 		s := types.NewStruct(types.I64, types.NewPointer(cg.toLLVMType(ty.Element)))
@@ -143,7 +145,7 @@ func (cg *CodeGen) genPrint(bb *ir.Block, val value.Value, pty parser.Type, vars
 			bb.NewCall(cg.printf, fmtPtr, val)
 		}
 	case parser.ListType:
-		bb = cg.printString(bb, "[")
+		bb = cg.printString(bb, "{")
 		structPtr := val
 		structTy := structPtr.Type().(*types.PointerType).ElemType
 		lengthPtr := bb.NewGetElementPtr(structTy, structPtr, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
@@ -194,7 +196,7 @@ func (cg *CodeGen) genPrint(bb *ir.Block, val value.Value, pty parser.Type, vars
 		incI := loopIncBB.NewAdd(i, one)
 		loopIncBB.NewBr(loopCondBB)
 		i.Incs = append(i.Incs, ir.NewIncoming(incI, loopIncBB))
-		s := "]"
+		s := "}"
 		if addNewline {
 			s += "\n"
 		}

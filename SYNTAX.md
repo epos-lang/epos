@@ -8,7 +8,21 @@
 - String concatenation with `++`/`<>` ?? or ("#{...}" ?)
 - List prepend (`..`)
 - Pattern matching
-- Array first/last pattern matching (`[first, ..last]`)
+- Array first/last pattern matching (`{first, ..last}`)
+- Lists (`seq`?) (`arr: list(int) = {1, 2, 3}`)
+- Records
+```epos
+# Records in Epos
+type person_type = @{
+  name: string
+  age: int
+  favorite_color?: string # optional
+}
+person: person_type = @{
+  name => "John",
+  age => 30
+}
+```
 - Discard block ?
 - Multiline raw string (`[[`/`]]`)
 - `assert` keyword
@@ -16,7 +30,13 @@
 - Allow multiple arguments for functions that are of the same type to share types (`fn add(a, b: int): int`)
 - Named return values (`fn add(a: int, b: int): (sum: int, diff: int)`) ??
 - All types be Capital letter? (`Bool`, `List(String)`, `Int`)
+- Define types with a symbol $Person @Person???
+- Define public functions (or maybe private) with `*` placed in front of the function name (`fn *add(a, b: int): int`)
+- Function types (`fn higher_order_fn(caller_fn: fn(a: int, b: int) -> int): int`)
+- `string` type as `text` ?
+- `expr` for express (like print)?
 - Fancy case syntax (..)
+- Discard patterns (`_ = 5` is unused, `_num = 5`)
 - `todo` keyword
 - Pipe Operator
 - Uniform Function Call Syntax ?
