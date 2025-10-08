@@ -1,0 +1,4 @@
+# Lists
+list = [1, 2, 3]
+print(list)
+print(elem(list, 2))

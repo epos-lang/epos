@@ -90,6 +90,8 @@ func (cg *CodeGen) getExprType(expr parser.Expr) types.Type {
 	case *parser.CallExpr:
 		if e.Callee == "print" {
 			return types.Double
+		} else if e.Callee == "elem" {
+			return types.Double // assuming elem returns a number
 		}
 		f, ok := cg.functions[e.Callee]
 		if !ok {
@@ -103,6 +105,8 @@ func (cg *CodeGen) getExprType(expr parser.Expr) types.Type {
 			return types.Double // Force double for non-double return types
 		}
 		return retType
+	case *parser.ListExpr:
+		return types.NewPointer(types.Double) // lists are pointers to arrays of doubles
 	}
 	panic("unknown expression type")
 }
@@ -149,7 +153,6 @@ func (cg *CodeGen) genFunction(s *parser.FunctionStmt) {
 	localVars := make(map[string]varInfo)
 	for _, param := range f.Params {
 		alloc := entry.NewAlloca(param.Type())
-		alloc.Align = 8
 		entry.NewStore(param, alloc)
 		localVars[param.LocalName] = varInfo{Alloc: alloc, Typ: param.Type()}
 	}
@@ -189,7 +192,6 @@ func (cg *CodeGen) genStmt(bb *ir.Block, stmt parser.Stmt, vars map[string]varIn
 			alloc = existing.Alloc
 		} else {
 			alloc = bb.NewAlloca(typ)
-			alloc.Align = 8
 			vars[s.Var] = varInfo{Alloc: alloc, Typ: typ}
 		}
 		bb.NewStore(val, alloc)
@@ -398,6 +400,11 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 				elemType := format.Type().(*types.PointerType).ElemType
 				fmtPtr = bb.NewGetElementPtr(elemType, format, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
 			} else if types.IsPointer(val.Type()) {
+				// Check if it's a pointer to double (list/array)
+				if ptrType, ok := val.Type().(*types.PointerType); ok && ptrType.ElemType.Equal(types.Double) {
+					// Can't print lists directly, return 0 as placeholder
+					return constant.NewFloat(types.Double, 0), bb
+				}
 				format = cg.strFmt
 				elemType := format.Type().(*types.PointerType).ElemType
 				fmtPtr = bb.NewGetElementPtr(elemType, format, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
@@ -412,6 +419,18 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 			fmtPtr.(*ir.InstGetElementPtr).InBounds = true
 			bb.NewCall(cg.printf, fmtPtr, val)
 			return constant.NewFloat(types.Double, 0), bb
+		} else if e.Callee == "elem" {
+			if len(e.Args) != 2 {
+				panic("elem takes two arguments")
+			}
+			list, bb := cg.genExpr(bb, e.Args[0], vars)
+			index, bb := cg.genExpr(bb, e.Args[1], vars)
+			// Convert index to integer if it's a float
+			indexInt := bb.NewFPToSI(index, types.I32)
+			// Use only one index for GEP as per LLVM IR requirements for array access
+			ptr := bb.NewGetElementPtr(types.Double, list, indexInt)
+			ptr.InBounds = true
+			return bb.NewLoad(types.Double, ptr), bb
 		} else {
 			f, ok := cg.functions[e.Callee]
 			if !ok {
@@ -437,7 +456,6 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 		val, bb := cg.genExpr(bb, e.Expr, vars)
 		resultType := cg.getExprType(e)
 		resultAlloc := bb.NewAlloca(resultType)
-		resultAlloc.Align = 8
 		contBB := bb.Parent.NewBlock(fmt.Sprintf("match_cont_%d", id))
 		defaultBB := bb.Parent.NewBlock(fmt.Sprintf("match_default_%d", id))
 		current := bb
@@ -496,6 +514,21 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 		contBB.NewBr(postBB)
 		load := postBB.NewLoad(resultType, resultAlloc)
 		return load, postBB
+	case *parser.ListExpr:
+		arrayType := types.NewArray(uint64(len(e.Elements)), types.Double)
+		alloc := bb.NewAlloca(arrayType)
+		for i, elem := range e.Elements {
+			elemVal, bb := cg.genExpr(bb, elem, vars)
+			if types.IsPointer(elemVal.Type()) {
+				elemVal = constant.NewFloat(types.Double, 0.0)
+			}
+			ptr := bb.NewGetElementPtr(arrayType, alloc, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, int64(i)))
+			ptr.InBounds = true
+			bb.NewStore(elemVal, ptr)
+		}
+		ptr := bb.NewGetElementPtr(arrayType, alloc, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
+		ptr.InBounds = true
+		return ptr, bb
 	default:
 		panic("unknown expression type")
 		return nil, nil

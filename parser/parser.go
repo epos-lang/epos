@@ -40,6 +40,8 @@ const (
 	TokenArrow
 	TokenTrue
 	TokenFalse
+	TokenLBracket
+	TokenRBracket
 )
 
 // Token struct
@@ -129,6 +131,10 @@ type StringExpr struct {
 	Value string
 }
 
+type ListExpr struct {
+	Elements []Expr
+}
+
 type ExprStmt struct {
 	Expr Expr
 }
@@ -161,7 +167,7 @@ func (l *Lexer) Lex() []Token {
 			if l.peekChar() == '[' {
 				l.lexMultiLineString()
 			} else {
-				// l.addToken(TokenLBracket, "[")
+				l.addToken(TokenLBracket, "[")
 			}
 		case ch == '+':
 			l.addToken(TokenPlus, "+")
@@ -199,6 +205,8 @@ func (l *Lexer) Lex() []Token {
 			l.addToken(TokenLParen, "(")
 		case ch == ')':
 			l.addToken(TokenRParen, ")")
+		case ch == ']':
+			l.addToken(TokenRBracket, "]")
 		default:
 			panic(fmt.Sprintf("unexpected character: %c", ch))
 		}
@@ -568,6 +576,18 @@ func (p *Parser) parsePrimary() Expr {
 		expr := p.parseExpr()
 		p.consume(TokenRParen)
 		return expr
+	case TokenLBracket:
+		p.pos++
+		var elements []Expr
+		if p.current().Type != TokenRBracket {
+			elements = append(elements, p.parseExpr())
+			for p.current().Type == TokenComma {
+				p.pos++
+				elements = append(elements, p.parseExpr())
+			}
+		}
+		p.consume(TokenRBracket)
+		return &ListExpr{Elements: elements}
 	default:
 		panic(fmt.Sprintf("unexpected token in primary: %v", tok))
 	}
