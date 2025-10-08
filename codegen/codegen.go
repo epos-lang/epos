@@ -13,16 +13,17 @@ import (
 
 // CodeGen struct
 type CodeGen struct {
-	module        *ir.Module
-	vars          map[string]varInfo
-	functions     map[string]*ir.Func
-	printf        *ir.Func
-	globalFmt     *ir.Global
-	strFmt        *ir.Global
-	ifCounter     int
-	whileCounter  int
-	matchCounter  int
-	stringCounter int
+	module                         *ir.Module
+	vars                           map[string]varInfo
+	functions                      map[string]*ir.Func
+	printf                         *ir.Func
+	globalFmt                      *ir.Global
+	strFmt                         *ir.Global
+	ifCounter                      int
+	whileCounter                   int
+	matchCounter                   int
+	stringCounter                  int
+	strlen, strcpy, strcat, malloc *ir.Func
 }
 
 type varInfo struct {
@@ -30,90 +31,47 @@ type varInfo struct {
 	Typ   types.Type
 }
 
+func (cg *CodeGen) toLLVMType(t parser.Type) types.Type {
+	switch ty := t.(type) {
+	case parser.BasicType:
+		if ty == "int" {
+			return types.Double
+		} else if ty == "string" {
+			return types.NewPointer(types.I8)
+		}
+	case parser.ListType:
+		return types.NewPointer(cg.toLLVMType(ty.Element))
+	default:
+		panic("unsupported type")
+		return nil
+	}
+	return nil
+}
+
 // NewCodeGen creates a new CodeGen
 func NewCodeGen() *CodeGen {
 	m := ir.NewModule()
 
-	printfTy := types.NewFunc(types.I32, types.NewPointer(types.I8))
-	printfTy.Variadic = true
-	printf := m.NewFunc("printf", printfTy)
+	printf := m.NewFunc("printf", types.I32, ir.NewParam("", types.NewPointer(types.I8)))
+	printf.Sig.Variadic = true
 
 	fmtStr := constant.NewCharArrayFromString("%f\n\x00")
 	globalFmt := m.NewGlobalDef("fmt", fmtStr)
 	strFmtStr := constant.NewCharArrayFromString("%s\n\x00")
 	strFmt := m.NewGlobalDef("strfmt", strFmtStr)
 
-	return &CodeGen{module: m, vars: make(map[string]varInfo), functions: make(map[string]*ir.Func), printf: printf, globalFmt: globalFmt, strFmt: strFmt, ifCounter: 0, whileCounter: 0, matchCounter: 0, stringCounter: 0}
+	strlen := m.NewFunc("strlen", types.I64, ir.NewParam("", types.NewPointer(types.I8)))
+
+	strcpy := m.NewFunc("strcpy", types.NewPointer(types.I8), ir.NewParam("", types.NewPointer(types.I8)), ir.NewParam("", types.NewPointer(types.I8)))
+
+	strcat := m.NewFunc("strcat", types.NewPointer(types.I8), ir.NewParam("", types.NewPointer(types.I8)), ir.NewParam("", types.NewPointer(types.I8)))
+
+	malloc := m.NewFunc("malloc", types.NewPointer(types.I8), ir.NewParam("", types.I64))
+
+	return &CodeGen{module: m, vars: make(map[string]varInfo), functions: make(map[string]*ir.Func), printf: printf, globalFmt: globalFmt, strFmt: strFmt, ifCounter: 0, whileCounter: 0, matchCounter: 0, stringCounter: 0, strlen: strlen, strcpy: strcpy, strcat: strcat, malloc: malloc}
 }
 
-func (cg *CodeGen) findReturnType(stmts []parser.Stmt) types.Type {
-	for _, stmt := range stmts {
-		switch s := stmt.(type) {
-		case *parser.ReturnStmt:
-			return cg.getExprType(s.Expr)
-		case *parser.IfStmt:
-			rt := cg.findReturnType(s.Then)
-			if !rt.Equal(types.Void) {
-				return rt
-			}
-			rt = cg.findReturnType(s.Else)
-			if !rt.Equal(types.Void) {
-				return rt
-			}
-		case *parser.WhileStmt:
-			rt := cg.findReturnType(s.Body)
-			if !rt.Equal(types.Void) {
-				return rt
-			}
-		}
-	}
-	return types.Void
-}
-
-func (cg *CodeGen) getExprType(expr parser.Expr) types.Type {
-	switch e := expr.(type) {
-	case *parser.NumberExpr:
-		return types.Double
-	case *parser.StringExpr:
-		return types.NewPointer(types.I8)
-	case *parser.MatchExpr:
-		if e.Default != nil {
-			return cg.getExprType(e.Default)
-		} else if len(e.Cases) > 0 {
-			return cg.getExprType(e.Cases[0].Body)
-		}
-		return types.Double // fallback to double if no cases or default
-	case *parser.VarExpr:
-		return types.Double // assuming variables are double
-	case *parser.BinaryExpr:
-		return types.Double // assuming numeric operations
-	case *parser.CallExpr:
-		if e.Callee == "print" {
-			return types.Double
-		} else if e.Callee == "elem" {
-			return types.Double // assuming elem returns a number
-		}
-		f, ok := cg.functions[e.Callee]
-		if !ok {
-			panic("undefined function: " + e.Callee)
-		}
-		retType := f.Sig.RetType
-		if types.IsPointer(retType) {
-			return types.Double // Convert pointer return types to double for consistency in operations
-		}
-		if !retType.Equal(types.Double) {
-			return types.Double // Force double for non-double return types
-		}
-		return retType
-	case *parser.ListExpr:
-		return types.NewPointer(types.Double) // lists are pointers to arrays of doubles
-	}
-	panic("unknown expression type")
-}
-
-func (cg *CodeGen) getReturnType(body []parser.Stmt) types.Type {
-	return cg.findReturnType(body)
-}
+// Removed findReturnType, getExprType, getReturnType as types are now annotated
 
 // Generate generates LLVM IR for the given statements
 func (cg *CodeGen) Generate(stmts []parser.Stmt) *ir.Module {
@@ -138,10 +96,13 @@ func (cg *CodeGen) Generate(stmts []parser.Stmt) *ir.Module {
 
 func (cg *CodeGen) genFunction(s *parser.FunctionStmt) {
 	var paramList []*ir.Param
-	for _, paramName := range s.Params {
-		paramList = append(paramList, ir.NewParam(paramName, types.Double))
+	for _, p := range s.Params {
+		paramList = append(paramList, ir.NewParam(p.Name, cg.toLLVMType(p.Ty)))
 	}
-	rt := cg.getReturnType(s.Body)
+	var rt types.Type = types.Void
+	if s.ReturnType != nil {
+		rt = cg.toLLVMType(s.ReturnType)
+	}
 	name := s.Name
 	if name == "main" {
 		name = "epos_user_main"
@@ -151,16 +112,16 @@ func (cg *CodeGen) genFunction(s *parser.FunctionStmt) {
 	entry := f.NewBlock("entry")
 
 	localVars := make(map[string]varInfo)
-	for _, param := range f.Params {
+	for i, param := range f.Params {
 		alloc := entry.NewAlloca(param.Type())
 		entry.NewStore(param, alloc)
-		localVars[param.LocalName] = varInfo{Alloc: alloc, Typ: param.Type()}
+		localVars[param.LocalName] = varInfo{Alloc: alloc, Typ: cg.toLLVMType(s.Params[i].Ty)}
 	}
 
 	current := cg.genStmts(entry, s.Body, localVars)
 
 	if current.Term == nil {
-		if types.IsVoid(rt) {
+		if rt.Equal(types.Void) {
 			current.NewRet(nil)
 		} else {
 			var zeroVal value.Value
@@ -183,7 +144,7 @@ func (cg *CodeGen) genStmt(bb *ir.Block, stmt parser.Stmt, vars map[string]varIn
 	switch s := stmt.(type) {
 	case *parser.AssignStmt:
 		val, bb := cg.genExpr(bb, s.Expr, vars)
-		typ := val.Type()
+		typ := cg.toLLVMType(s.Type)
 		var alloc *ir.InstAlloca
 		if existing, ok := vars[s.Var]; ok {
 			if !existing.Typ.Equal(typ) {
@@ -343,7 +304,7 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 		if !ok {
 			panic("undefined variable: " + e.Name)
 		}
-		return bb.NewLoad(v.Typ, v.Alloc), bb
+		return bb.NewLoad(cg.toLLVMType(e.Type), v.Alloc), bb
 	case *parser.UnaryExpr:
 		if e.Op == parser.TokenMinus {
 			zero := constant.NewFloat(types.Double, 0)
@@ -351,38 +312,44 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 			return bb.NewFSub(zero, operand), bb
 		}
 		panic("unknown unary operator")
-		return nil, nil
+		return nil, bb
 	case *parser.BinaryExpr:
 		left, bb := cg.genExpr(bb, e.Left, vars)
 		right, bb := cg.genExpr(bb, e.Right, vars)
-		// Ensure operands are of type double for numeric operations
-		if types.IsPointer(left.Type()) {
-			left = constant.NewFloat(types.Double, 0.0)
-		}
-		if types.IsPointer(right.Type()) {
-			right = constant.NewFloat(types.Double, 0.0)
-		}
-		switch e.Op {
-		case parser.TokenPlus:
-			return bb.NewFAdd(left, right), bb
-		case parser.TokenMinus:
-			return bb.NewFSub(left, right), bb
-		case parser.TokenMul:
-			return bb.NewFMul(left, right), bb
-		case parser.TokenDiv:
-			return bb.NewFDiv(left, right), bb
-		case parser.TokenGT:
-			cmp := bb.NewFCmp(enum.FPredOGT, left, right)
-			return bb.NewSelect(cmp, constant.NewFloat(types.Double, 1), constant.NewFloat(types.Double, 0)), bb
-		case parser.TokenLT:
-			cmp := bb.NewFCmp(enum.FPredOLT, left, right)
-			return bb.NewSelect(cmp, constant.NewFloat(types.Double, 1), constant.NewFloat(types.Double, 0)), bb
-		case parser.TokenEQ:
-			cmp := bb.NewFCmp(enum.FPredOEQ, left, right)
-			return bb.NewSelect(cmp, constant.NewFloat(types.Double, 1), constant.NewFloat(types.Double, 0)), bb
-		default:
-			panic("unknown operator")
-			return nil, nil
+		if e.Type == parser.BasicType("int") {
+			switch e.Op {
+			case parser.TokenPlus:
+				return bb.NewFAdd(left, right), bb
+			case parser.TokenMinus:
+				return bb.NewFSub(left, right), bb
+			case parser.TokenMul:
+				return bb.NewFMul(left, right), bb
+			case parser.TokenDiv:
+				return bb.NewFDiv(left, right), bb
+			case parser.TokenGT:
+				cmp := bb.NewFCmp(enum.FPredOGT, left, right)
+				return bb.NewSelect(cmp, constant.NewFloat(types.Double, 1), constant.NewFloat(types.Double, 0)), bb
+			case parser.TokenLT:
+				cmp := bb.NewFCmp(enum.FPredOLT, left, right)
+				return bb.NewSelect(cmp, constant.NewFloat(types.Double, 1), constant.NewFloat(types.Double, 0)), bb
+			case parser.TokenEQ:
+				cmp := bb.NewFCmp(enum.FPredOEQ, left, right)
+				return bb.NewSelect(cmp, constant.NewFloat(types.Double, 1), constant.NewFloat(types.Double, 0)), bb
+			default:
+				panic("unknown numeric operator")
+				return nil, bb
+			}
+		} else if e.Type == parser.BasicType("string") && e.Op == parser.TokenPlus {
+			leftLen := bb.NewCall(cg.strlen, left)
+			rightLen := bb.NewCall(cg.strlen, right)
+			totalLen := bb.NewAdd(leftLen, rightLen)
+			alloc := bb.NewCall(cg.malloc, bb.NewAdd(totalLen, constant.NewInt(types.I64, 1)))
+			bb.NewCall(cg.strcpy, alloc, left)
+			bb.NewCall(cg.strcat, alloc, right)
+			return alloc, bb
+		} else {
+			panic("unsupported binary operation")
+			return nil, bb
 		}
 	case *parser.CallExpr:
 		if e.Callee == "print" {
@@ -390,32 +357,21 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 				panic("print takes one argument")
 			}
 			val, bb := cg.genExpr(bb, e.Args[0], vars)
-			if val.Type().Equal(types.I1) {
-				val = bb.NewSelect(val, constant.NewFloat(types.Double, 1), constant.NewFloat(types.Double, 0))
-			}
 			var format *ir.Global
 			var fmtPtr value.Value
-			if val.Type().Equal(types.Double) {
-				format = cg.globalFmt
-				elemType := format.Type().(*types.PointerType).ElemType
-				fmtPtr = bb.NewGetElementPtr(elemType, format, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
-			} else if types.IsPointer(val.Type()) {
-				// Check if it's a pointer to double (list/array)
-				if ptrType, ok := val.Type().(*types.PointerType); ok && ptrType.ElemType.Equal(types.Double) {
-					// Can't print lists directly, return 0 as placeholder
-					return constant.NewFloat(types.Double, 0), bb
-				}
+			if val.Type().Equal(types.NewPointer(types.I8)) {
 				format = cg.strFmt
-				elemType := format.Type().(*types.PointerType).ElemType
-				fmtPtr = bb.NewGetElementPtr(elemType, format, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
+			} else if val.Type().Equal(types.Double) {
+				format = cg.globalFmt
+			} else if types.IsPointer(val.Type()) {
+				// list
+				return constant.NewFloat(types.Double, 0), bb
 			} else {
-				// Convert unsupported types to double if possible, otherwise log error
-				// Fallback to 0.0 for unsupported types
 				val = constant.NewFloat(types.Double, 0.0)
 				format = cg.globalFmt
-				elemType := format.Type().(*types.PointerType).ElemType
-				fmtPtr = bb.NewGetElementPtr(elemType, format, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
 			}
+			elemType := format.Type().(*types.PointerType).ElemType
+			fmtPtr = bb.NewGetElementPtr(elemType, format, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
 			fmtPtr.(*ir.InstGetElementPtr).InBounds = true
 			bb.NewCall(cg.printf, fmtPtr, val)
 			return constant.NewFloat(types.Double, 0), bb
@@ -425,12 +381,11 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 			}
 			list, bb := cg.genExpr(bb, e.Args[0], vars)
 			index, bb := cg.genExpr(bb, e.Args[1], vars)
-			// Convert index to integer if it's a float
 			indexInt := bb.NewFPToSI(index, types.I32)
-			// Use only one index for GEP as per LLVM IR requirements for array access
-			ptr := bb.NewGetElementPtr(types.Double, list, indexInt)
+			elemTy := cg.toLLVMType(e.Type)
+			ptr := bb.NewGetElementPtr(elemTy, list, indexInt)
 			ptr.InBounds = true
-			return bb.NewLoad(types.Double, ptr), bb
+			return bb.NewLoad(elemTy, ptr), bb
 		} else {
 			f, ok := cg.functions[e.Callee]
 			if !ok {
@@ -444,17 +399,14 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 				args = append(args, argVal)
 			}
 			callResult := currentBB.NewCall(f, args...)
-			if !callResult.Type().Equal(types.Double) && !types.IsPointer(callResult.Type()) && !callResult.Type().Equal(types.Void) {
-				// Convert non-double, non-pointer results to double for consistency
-				return bb.NewUIToFP(callResult, types.Double), currentBB
-			}
 			return callResult, currentBB
 		}
+
 	case *parser.MatchExpr:
 		cg.matchCounter++
 		id := cg.matchCounter
 		val, bb := cg.genExpr(bb, e.Expr, vars)
-		resultType := cg.getExprType(e)
+		resultType := cg.toLLVMType(e.Type)
 		resultAlloc := bb.NewAlloca(resultType)
 		contBB := bb.Parent.NewBlock(fmt.Sprintf("match_cont_%d", id))
 		defaultBB := bb.Parent.NewBlock(fmt.Sprintf("match_default_%d", id))
@@ -515,13 +467,11 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 		load := postBB.NewLoad(resultType, resultAlloc)
 		return load, postBB
 	case *parser.ListExpr:
-		arrayType := types.NewArray(uint64(len(e.Elements)), types.Double)
+		elemTy := cg.toLLVMType(e.Type.(parser.ListType).Element)
+		arrayType := types.NewArray(uint64(len(e.Elements)), elemTy)
 		alloc := bb.NewAlloca(arrayType)
 		for i, elem := range e.Elements {
 			elemVal, bb := cg.genExpr(bb, elem, vars)
-			if types.IsPointer(elemVal.Type()) {
-				elemVal = constant.NewFloat(types.Double, 0.0)
-			}
 			ptr := bb.NewGetElementPtr(arrayType, alloc, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, int64(i)))
 			ptr.InBounds = true
 			bb.NewStore(elemVal, ptr)
@@ -531,6 +481,6 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 		return ptr, bb
 	default:
 		panic("unknown expression type")
-		return nil, nil
+		return nil, bb
 	}
 }

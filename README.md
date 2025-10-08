@@ -1,7 +1,7 @@
 # Epos
 _The programming language of epic poetry_
 
-Epos draws inspiration from [Lua](https://www.lua.org/), [Nim](https://nim-lang.org/), [Elixir](https://elixir-lang.org/), [Gleam](https://gleam.run/), and [Rust](https://www.rust-lang.org/).
+Epos draws inspiration from [Lua](https://www.lua.org/), [Nim](https://nim-lang.org/), [Elixir](https://elixir-lang.org/), [Gleam](https://gleam.run/), [Go](https://golang.org/), and [Rust](https://www.rust-lang.org/).
 
 Epos compiles to LLVM IR and is written in Go.
 

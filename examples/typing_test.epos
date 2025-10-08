@@ -1,0 +1,28 @@
+# Test for static typing in Epos
+fn add(a: int, b: int): int
+  a + b
+end
+print(add(1, 2))
+# Should print "3"
+
+fn fact(n: int): int
+  result = match n == 0 then
+    true -> 1
+    false -> n * fact(n - 1)
+  end
+  result
+end
+print(fact(5))
+# Should print "120"
+
+fn greet(name: string): string
+  "Hello, " + name + "!"
+end
+print(greet("World"))
+# Should print "Hello, World!"
+
+fn get_first_el(arr: list(int)): int
+  elem(arr, 0)
+end
+print(get_first_el([1, 2, 3]))
+# Should print "1"

@@ -5,7 +5,7 @@
 - All variables are immutable
 - Functions/variables are public by default (use `priv` for private)
 - No `for`, `while`, `if/else` statements
-- String concatenation with `++`/`<>` ??
+- String concatenation with `++`/`<>` ?? or ("#{...}" ?)
 - List prepend (`..`)
 - Pattern matching
 - Array first/last pattern matching (`[first, ..last]`)

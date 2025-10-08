@@ -5,4 +5,4 @@
 - [ ] Add objects (`{name: "John", age: 30}` or `{name => "John", age => 30}`)
 - [ ] Array first/last pattern matching (`[first, ..last]` or `[first | last]` ??) (`@[first | last]`)
 - [ ] Make variables immutable
-- [ ] Add static typing
+- [x] Add static typing

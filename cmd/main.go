@@ -40,6 +40,12 @@ func main() {
 	p := parser.NewParser(tokens)
 	stmts := p.Parse()
 
+	tc := parser.NewTypeChecker()
+	if err := tc.TypeCheck(stmts); err != nil {
+		fmt.Printf("Type error: %v\n", err)
+		os.Exit(1)
+	}
+
 	cg := codegen.NewCodeGen()
 	m := cg.Generate(stmts)
 
