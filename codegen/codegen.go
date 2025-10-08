@@ -178,7 +178,18 @@ func (cg *CodeGen) genPrint(bb *ir.Block, val value.Value, pty parser.Type, vars
 		elemPtr := mergePrintBB.NewGetElementPtr(elemTy, dataPtr, i)
 		elemPtr.InBounds = true
 		elem := mergePrintBB.NewLoad(elemTy, elemPtr)
-		mergePrintBB = cg.genPrint(mergePrintBB, elem, ty.Element, vars, false)
+		switch elTy := ty.Element.(type) {
+		case parser.BasicType:
+			if string(elTy) == "string" {
+				mergePrintBB = cg.printString(mergePrintBB, "\"")
+			}
+			mergePrintBB = cg.genPrint(mergePrintBB, elem, ty.Element, vars, false)
+			if string(elTy) == "string" {
+				mergePrintBB = cg.printString(mergePrintBB, "\"")
+			}
+		default:
+			mergePrintBB = cg.genPrint(mergePrintBB, elem, ty.Element, vars, false)
+		}
 		mergePrintBB.NewBr(loopIncBB)
 		incI := loopIncBB.NewAdd(i, one)
 		loopIncBB.NewBr(loopCondBB)
