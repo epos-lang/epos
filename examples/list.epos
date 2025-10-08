@@ -15,3 +15,6 @@ print(elem(boolean-arr, 2))
 list-of-lists: list(list(int)) = {{1, 2, 3}, {4, 5, 6}, {7, 8, 9}}
 print(list-of-lists)
 print(elem(list-of-lists, 1))
+
+list-of-list-of-list: list(list(list(int))) = {{{1, 2, 3}, {4, 5, 6}, {7, 8, 9}}, {{1, 2, 3}, {4, 5, 6}, {7, 8, 9}}}
+print(list-of-list-of-list)
