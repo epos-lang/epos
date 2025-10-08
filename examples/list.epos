@@ -3,9 +3,15 @@ arr: list(int) = [1, 2, 3]
 print(arr)
 print(elem(arr, 2))
 
-string-arr: list(string) = ["a", "b", "c"]
-print(elem(string-arr, 1))
 
-boolean-arr = list(bool) = [true, false, true]
-print(elem(boolean-arr, 2))
-#print(true)
+string-arr: list(string) = ["a", "b", "c", "def"]
+print(string-arr)
+#print(elem(string-arr, 1))
+
+#boolean-arr = list(bool) = [true, false, true]
+#print(boolean-arr)
+#print(elem(boolean-arr, 2))
+
+#list-of-lists = list(list(int)) = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+#print(list-of-lists)
+#print(elem(list-of-lists, 1))

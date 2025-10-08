@@ -1,4 +1,4 @@
-fn message()
+fn message(): string
 	[[This is a multi-line string.
 It spans several lines
 for readability!]]

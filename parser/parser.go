@@ -46,6 +46,7 @@ const (
 	TokenTypeInt
 	TokenTypeString
 	TokenTypeList
+	TokenTypeBool
 )
 
 // Token struct
@@ -58,7 +59,7 @@ type Token struct {
 type Expr interface{}
 
 type NumberExpr struct {
-	Value float64
+	Value int64
 	Type  Type
 }
 
@@ -139,6 +140,11 @@ type MatchExpr struct {
 	Cases   []MatchCaseExpr
 	Default Expr
 	Type    Type
+}
+
+type BoolExpr struct {
+	Value bool
+	Type  Type
 }
 
 type StringExpr struct {
@@ -352,6 +358,8 @@ func (l *Lexer) lexIdentifier() {
 		l.tokens = append(l.tokens, Token{Type: TokenTypeString, Value: id})
 	} else if id == "list" {
 		l.tokens = append(l.tokens, Token{Type: TokenTypeList, Value: id})
+	} else if id == "bool" {
+		l.tokens = append(l.tokens, Token{Type: TokenTypeBool, Value: id})
 	} else {
 		l.tokens = append(l.tokens, Token{Type: TokenIdentifier, Value: id})
 	}
@@ -597,17 +605,17 @@ func (p *Parser) parsePrimary() Expr {
 		return &MatchExpr{Expr: expr, Cases: cases, Default: defaultExpr}
 	case TokenNumber:
 		p.pos++
-		val, _ := strconv.ParseFloat(tok.Value, 64)
+		val, _ := strconv.ParseInt(tok.Value, 10, 64)
 		return &NumberExpr{Value: val}
 	case TokenString:
 		p.pos++
 		return &StringExpr{Value: tok.Value}
 	case TokenTrue:
 		p.pos++
-		return &NumberExpr{Value: 1.0}
+		return &BoolExpr{Value: true}
 	case TokenFalse:
 		p.pos++
-		return &NumberExpr{Value: 0.0}
+		return &BoolExpr{Value: false}
 	case TokenIdentifier:
 		name := tok.Value
 		p.pos++
@@ -862,6 +870,10 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 		ty := BasicType("int")
 		e.Type = ty
 		return ty, nil
+	case *BoolExpr:
+		ty := BasicType("bool")
+		e.Type = ty
+		return ty, nil
 	case *StringExpr:
 		ty := BasicType("string")
 		e.Type = ty
@@ -896,14 +908,13 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 			if leftTy == BasicType("int") && isNumberOp(e.Op) {
 				e.Type = BasicType("int")
 				return BasicType("int"), nil
+			} else if isComparisonOp(e.Op) {
+				e.Type = BasicType("bool")
+				return BasicType("bool"), nil
 			} else if leftTy == BasicType("string") && e.Op == TokenPlus {
 				e.Type = BasicType("string")
 				return BasicType("string"), nil
 			}
-		}
-		if isComparisonOp(e.Op) {
-			e.Type = BasicType("int")
-			return BasicType("int"), nil
 		}
 		return nil, fmt.Errorf("type mismatch in binary expression")
 	case *CallExpr:

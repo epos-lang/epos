@@ -15,7 +15,9 @@
 - `import` keyword for files, stdlib or urls (no package manager)
 - Allow multiple arguments for functions that are of the same type to share types (`fn add(a, b: int): int`)
 - Named return values (`fn add(a: int, b: int): (sum: int, diff: int)`) ??
+- All types be Capital letter? (`Bool`, `List(String)`, `Int`)
 - Fancy case syntax (..)
+- `todo` keyword
 - Pipe Operator
 - Uniform Function Call Syntax ?
 - Static typing
@@ -56,11 +58,11 @@ print(fib(10))
 # Arrays
 arr: int[] = [1, 2, 3, 4, 5]
 # Objects
-type Person
+type Person_Type
   name: string
   age: int
 end
-obj: Person = {
+person: Person_Type = {
   name => "John",
   age => 30
 }
