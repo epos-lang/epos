@@ -1,5 +1,9 @@
-msg = [[This is a multi-line string.
+# test.epos
+msg: string = [[This is a multi-line string.
 It spans several lines
 for readability!]]
 
 print(msg)
+
+num: int = 123
+print(num)

@@ -143,6 +143,7 @@ func (cg *CodeGen) genFunction(s *parser.FunctionStmt) {
 func (cg *CodeGen) genStmt(bb *ir.Block, stmt parser.Stmt, vars map[string]varInfo) *ir.Block {
 	switch s := stmt.(type) {
 	case *parser.AssignStmt:
+		// Updated for typed variables
 		val, bb := cg.genExpr(bb, s.Expr, vars)
 		typ := cg.toLLVMType(s.Type)
 		var alloc *ir.InstAlloca
@@ -276,6 +277,7 @@ func (cg *CodeGen) genStmt(bb *ir.Block, stmt parser.Stmt, vars map[string]varIn
 	default:
 		panic("unknown statement type")
 	}
+	return nil
 }
 
 func (cg *CodeGen) genStmts(bb *ir.Block, stmts []parser.Stmt, vars map[string]varInfo) *ir.Block {

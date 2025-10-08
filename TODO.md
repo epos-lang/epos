@@ -2,7 +2,11 @@
 - [x] Add kebab case support
 - [x] Add multiple strings (`[[]]`)
 - [x] Add lists (? what to do about `[[1, 2], [2]]` not turning into a mutliline string? -> `@[@[1, 2, 3], @[4, 5, 6]]`?)
+- [x] Allow typing of variables
+- [ ] Make `match` expressions passable as implicit returns
 - [ ] Add objects (`{name: "John", age: 30}` or `{name => "John", age => 30}`)
 - [ ] Array first/last pattern matching (`[first, ..last]` or `[first | last]` ??) (`@[first | last]`)
+- [ ] Add piping operator (`|>`)
+- [ ] Remove `if`/`while` statements
 - [ ] Make variables immutable
 - [x] Add static typing

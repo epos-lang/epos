@@ -1,4 +1,4 @@
-fn fact(n)
+fn fact(n: int): int
   result = match n == 0 then
     true -> 1
     false -> n * fact(n - 1)
@@ -7,4 +7,4 @@ fn fact(n)
 end
 
 print(fact(5))
--- Should print 120
+# Should print 120

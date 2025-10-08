@@ -83,9 +83,10 @@ type UnaryExpr struct {
 type Stmt interface{}
 
 type AssignStmt struct {
-	Var  string
-	Expr Expr
-	Type Type
+	Var      string
+	DeclType Type
+	Expr     Expr
+	Type     Type
 }
 
 type FunctionStmt struct {
@@ -376,7 +377,7 @@ func (p *Parser) Parse() []Stmt {
 
 func (p *Parser) parseStmt() Stmt {
 	tok := p.current()
-	if tok.Type == TokenIdentifier && p.peek().Type == TokenAssign {
+	if tok.Type == TokenIdentifier && (p.peek().Type == TokenAssign || p.peek().Type == TokenColon) {
 		return p.parseAssign()
 	} else if tok.Type == TokenFunction {
 		return p.parseFunction()
@@ -395,9 +396,14 @@ func (p *Parser) parseStmt() Stmt {
 
 func (p *Parser) parseAssign() *AssignStmt {
 	varName := p.consume(TokenIdentifier).Value
+	var declType Type
+	if p.current().Type == TokenColon {
+		p.pos++
+		declType = p.parseType()
+	}
 	p.consume(TokenAssign)
 	expr := p.parseExpr()
-	return &AssignStmt{Var: varName, Expr: expr}
+	return &AssignStmt{Var: varName, DeclType: declType, Expr: expr}
 }
 
 func (p *Parser) parseFunction() *FunctionStmt {
@@ -672,6 +678,13 @@ func (p *Parser) peek() Token {
 	return Token{Type: TokenEOF}
 }
 
+func (p *Parser) peekNext() Token {
+	if p.pos+2 < len(p.tokens) {
+		return p.tokens[p.pos+2]
+	}
+	return Token{Type: TokenEOF}
+}
+
 func (p *Parser) consume(tt TokenType) Token {
 	tok := p.current()
 	if tok.Type != tt {
@@ -711,8 +724,9 @@ func (tc *TypeChecker) TypeCheck(stmts []Stmt) error {
 	}
 
 	// Type check statements
+	topEnv := make(map[string]Type)
 	for _, stmt := range stmts {
-		if err := tc.typeCheckStmt(stmt, make(map[string]Type)); err != nil {
+		if err := tc.typeCheckStmt(stmt, topEnv); err != nil {
 			return err
 		}
 	}
@@ -723,6 +737,9 @@ func (tc *TypeChecker) typeCheckStmt(stmt Stmt, env map[string]Type) error {
 	switch s := stmt.(type) {
 	case *FunctionStmt:
 		localEnv := make(map[string]Type)
+		for k, v := range env {
+			localEnv[k] = v
+		}
 		for i, p := range s.Params {
 			localEnv[p.Name] = tc.funcs[s.Name].Params[i]
 		}
@@ -750,7 +767,22 @@ func (tc *TypeChecker) typeCheckStmt(stmt Stmt, env map[string]Type) error {
 		if err != nil {
 			return err
 		}
-		env[s.Var] = ty
+		if s.DeclType != nil {
+			if !equalTypes(ty, s.DeclType) {
+				return fmt.Errorf("type mismatch: expected %v, got %v", s.DeclType, ty)
+			}
+			ty = s.DeclType
+		}
+		if existing, ok := env[s.Var]; ok {
+			if !equalTypes(existing, ty) {
+				return fmt.Errorf("reassignment type mismatch: expected %v, got %v", existing, ty)
+			}
+			if s.DeclType != nil {
+				return fmt.Errorf("cannot specify type on reassignment")
+			}
+		} else {
+			env[s.Var] = ty
+		}
 		s.Type = ty
 		return nil
 	case *ReturnStmt:

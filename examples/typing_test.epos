@@ -6,7 +6,7 @@ print(add(1, 2))
 # Should print "3"
 
 fn fact(n: int): int
-  result = match n == 0 then
+  result: int = match n == 0 then
     true -> 1
     false -> n * fact(n - 1)
   end

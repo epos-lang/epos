@@ -1,4 +1,11 @@
 # Lists
-list = [1, 2, 3]
-print(list)
-print(elem(list, 2))
+arr: list(int) = [1, 2, 3]
+print(arr)
+print(elem(arr, 2))
+
+string-arr: list(string) = ["a", "b", "c"]
+print(elem(string-arr, 1))
+
+boolean-arr = list(bool) = [true, false, true]
+print(elem(boolean-arr, 2))
+#print(true)

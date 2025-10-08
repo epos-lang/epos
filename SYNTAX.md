@@ -13,6 +13,8 @@
 - Multiline raw string (`[[`/`]]`)
 - `assert` keyword
 - `import` keyword for files, stdlib or urls (no package manager)
+- Allow multiple arguments for functions that are of the same type to share types (`fn add(a, b: int): int`)
+- Named return values (`fn add(a: int, b: int): (sum: int, diff: int)`) ??
 - Fancy case syntax (..)
 - Pipe Operator
 - Uniform Function Call Syntax ?
