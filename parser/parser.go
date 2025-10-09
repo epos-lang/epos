@@ -106,7 +106,7 @@ type FunctionStmt struct {
 }
 
 type CallExpr struct {
-	Callee string
+	Callee Expr
 	Args   []Expr
 	Type   Type
 }
@@ -181,6 +181,11 @@ type Field struct {
 
 type RecordType struct {
 	Fields []Field
+}
+
+type FunctionType struct {
+	Params []Type
+	Return Type
 }
 
 type RecordExpr struct {
@@ -644,10 +649,11 @@ func (p *Parser) parseUnary() Expr {
 
 func (p *Parser) parsePrimary() Expr {
 	tok := p.current()
+	var expr Expr
 	switch tok.Type {
 	case TokenMatch:
 		p.pos++
-		expr := p.parseExpr()
+		matchExpr := p.parseExpr()
 		p.consume(TokenThen)
 		var cases []MatchCaseExpr
 		var defaultExpr Expr
@@ -670,42 +676,27 @@ func (p *Parser) parsePrimary() Expr {
 			}
 		}
 		p.consume(TokenEnd)
-		return &MatchExpr{Expr: expr, Cases: cases, Default: defaultExpr}
+		expr = &MatchExpr{Expr: matchExpr, Cases: cases, Default: defaultExpr}
 	case TokenNumber:
 		p.pos++
 		val, _ := strconv.ParseInt(tok.Value, 10, 64)
-		return &NumberExpr{Value: val}
+		expr = &NumberExpr{Value: val}
 	case TokenString:
 		p.pos++
-		return &StringExpr{Value: tok.Value}
+		expr = &StringExpr{Value: tok.Value}
 	case TokenTrue:
 		p.pos++
-		return &BoolExpr{Value: true}
+		expr = &BoolExpr{Value: true}
 	case TokenFalse:
 		p.pos++
-		return &BoolExpr{Value: false}
+		expr = &BoolExpr{Value: false}
 	case TokenIdentifier:
-		name := tok.Value
+		expr = &VarExpr{Name: tok.Value}
 		p.pos++
-		if p.current().Type == TokenLParen {
-			p.pos++
-			var args []Expr
-			if p.current().Type != TokenRParen {
-				args = append(args, p.parseExpr())
-				for p.current().Type == TokenComma {
-					p.pos++
-					args = append(args, p.parseExpr())
-				}
-			}
-			p.consume(TokenRParen)
-			return &CallExpr{Callee: name, Args: args}
-		}
-		return &VarExpr{Name: name}
 	case TokenLParen:
 		p.pos++
-		expr := p.parseExpr()
+		expr = p.parseExpr()
 		p.consume(TokenRParen)
-		return expr
 	case TokenLBrace:
 		p.pos++
 		var elements []Expr
@@ -717,7 +708,7 @@ func (p *Parser) parsePrimary() Expr {
 			}
 		}
 		p.consume(TokenRBrace)
-		return &ListExpr{Elements: elements}
+		expr = &ListExpr{Elements: elements}
 	case TokenAt:
 		p.pos++
 		p.consume(TokenLBrace)
@@ -725,35 +716,80 @@ func (p *Parser) parsePrimary() Expr {
 		for p.current().Type != TokenRBrace {
 			field := p.consume(TokenIdentifier).Value
 			p.consume(TokenFatArrow)
-			expr := p.parseExpr()
-			fields[field] = expr
+			fieldExpr := p.parseExpr()
+			fields[field] = fieldExpr
 			if p.current().Type == TokenComma {
 				p.pos++
 			}
 		}
 		p.consume(TokenRBrace)
-		return &RecordExpr{Fields: fields}
+		expr = &RecordExpr{Fields: fields}
 	default:
 		panic(fmt.Sprintf("unexpected token in primary: %v", tok))
 	}
+
+	for {
+		if p.current().Type == TokenLParen {
+			p.pos++
+			var args []Expr
+			if p.current().Type != TokenRParen {
+				args = append(args, p.parseExpr())
+				for p.current().Type == TokenComma {
+					p.pos++
+					args = append(args, p.parseExpr())
+				}
+			}
+			p.consume(TokenRParen)
+			expr = &CallExpr{Callee: expr, Args: args}
+		} else if p.current().Type == TokenDot {
+			p.pos++
+			field := p.consume(TokenIdentifier).Value
+			expr = &FieldAccessExpr{Receiver: expr, Field: field}
+		} else if p.current().Type == TokenLBracket {
+			p.pos++
+			fieldTok := p.consume(TokenString)
+			p.consume(TokenRBracket)
+			expr = &FieldAccessExpr{Receiver: expr, Field: fieldTok.Value}
+		} else {
+			break
+		}
+	}
+	return expr
 }
 
 func (p *Parser) parseType() Type {
-	tok := p.consume(TokenIdentifier)
-	switch tok.Value {
-	case "int":
-		return BasicType("int")
-	case "string":
-		return BasicType("string")
-	case "bool":
-		return BasicType("bool")
-	case "list":
+	if p.current().Type == TokenFunction {
+		p.consume(TokenFunction)
 		p.consume(TokenLParen)
-		elem := p.parseType()
+		var params []Type
+		if p.current().Type != TokenRParen {
+			params = append(params, p.parseType())
+			for p.current().Type == TokenComma {
+				p.pos++
+				params = append(params, p.parseType())
+			}
+		}
 		p.consume(TokenRParen)
-		return ListType{Element: elem}
-	default:
-		return BasicType(tok.Value)
+		p.consume(TokenArrow)
+		ret := p.parseType()
+		return FunctionType{Params: params, Return: ret}
+	} else {
+		tok := p.consume(TokenIdentifier)
+		switch tok.Value {
+		case "int":
+			return BasicType("int")
+		case "string":
+			return BasicType("string")
+		case "bool":
+			return BasicType("bool")
+		case "list":
+			p.consume(TokenLParen)
+			elem := p.parseType()
+			p.consume(TokenRParen)
+			return ListType{Element: elem}
+		default:
+			return BasicType(tok.Value)
+		}
 	}
 }
 
@@ -854,6 +890,12 @@ func (tc *TypeChecker) resolveType(t Type) Type {
 			ty.Fields[i].Ty = tc.resolveType(ty.Fields[i].Ty)
 		}
 		return ty
+	case FunctionType:
+		params := make([]Type, len(ty.Params))
+		for i := range ty.Params {
+			params[i] = tc.resolveType(ty.Params[i])
+		}
+		return FunctionType{Params: params, Return: tc.resolveType(ty.Return)}
 	default:
 		return t
 	}
@@ -1047,11 +1089,17 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 		return ty, nil
 	case *VarExpr:
 		ty, ok := env[e.Name]
-		if !ok {
-			return nil, fmt.Errorf("undefined variable: %s", e.Name)
+		if ok {
+			e.Type = ty
+			return ty, nil
 		}
-		e.Type = ty
-		return ty, nil
+		sig, ok := tc.funcs[e.Name]
+		if ok {
+			ty := FunctionType{Params: sig.Params, Return: sig.Return}
+			e.Type = ty
+			return ty, nil
+		}
+		return nil, fmt.Errorf("undefined: %s", e.Name)
 	case *UnaryExpr:
 		ty, err := tc.typeCheckExpr(e.Expr, env)
 		if err != nil {
@@ -1085,56 +1133,61 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 		}
 		return nil, fmt.Errorf("type mismatch in binary expression")
 	case *CallExpr:
-		if e.Callee == "print" {
-			if len(e.Args) != 1 {
-				return nil, fmt.Errorf("print takes one argument")
-			}
-			_, err := tc.typeCheckExpr(e.Args[0], env)
-			if err != nil {
-				return nil, err
-			}
-			e.Type = BasicType("int") // placeholder
-			return BasicType("int"), nil
-		} else if e.Callee == "elem" {
-			if len(e.Args) != 2 {
-				return nil, fmt.Errorf("elem takes two arguments")
-			}
-			listTy, err := tc.typeCheckExpr(e.Args[0], env)
-			if err != nil {
-				return nil, err
-			}
-			indexTy, err := tc.typeCheckExpr(e.Args[1], env)
-			if err != nil {
-				return nil, err
-			}
-			if indexTy != BasicType("int") {
-				return nil, fmt.Errorf("index must be int")
-			}
-			if lt, ok := listTy.(ListType); ok {
-				e.Type = lt.Element
-				return lt.Element, nil
-			}
-			return nil, fmt.Errorf("elem called on non-list")
-		} else {
-			sig, ok := tc.funcs[e.Callee]
-			if !ok {
-				return nil, fmt.Errorf("undefined function: %s", e.Callee)
-			}
-			if len(e.Args) != len(sig.Params) {
-				return nil, fmt.Errorf("argument count mismatch")
-			}
-			for i, arg := range e.Args {
-				argTy, err := tc.typeCheckExpr(arg, env)
+		if ve, ok := e.Callee.(*VarExpr); ok {
+			if ve.Name == "print" {
+				if len(e.Args) != 1 {
+					return nil, fmt.Errorf("print takes one argument")
+				}
+				_, err := tc.typeCheckExpr(e.Args[0], env)
 				if err != nil {
 					return nil, err
 				}
-				if !tc.equalTypes(argTy, sig.Params[i]) {
-					return nil, fmt.Errorf("argument type mismatch")
+				e.Type = BasicType("int") // placeholder
+				return BasicType("int"), nil
+			} else if ve.Name == "elem" {
+				if len(e.Args) != 2 {
+					return nil, fmt.Errorf("elem takes two arguments")
 				}
+				listTy, err := tc.typeCheckExpr(e.Args[0], env)
+				if err != nil {
+					return nil, err
+				}
+				indexTy, err := tc.typeCheckExpr(e.Args[1], env)
+				if err != nil {
+					return nil, err
+				}
+				if indexTy != BasicType("int") {
+					return nil, fmt.Errorf("index must be int")
+				}
+				if lt, ok := listTy.(ListType); ok {
+					e.Type = lt.Element
+					return lt.Element, nil
+				}
+				return nil, fmt.Errorf("elem called on non-list")
 			}
-			e.Type = sig.Return
-			return sig.Return, nil
 		}
+		calleeTy, err := tc.typeCheckExpr(e.Callee, env)
+		if err != nil {
+			return nil, err
+		}
+		ft, ok := calleeTy.(FunctionType)
+		if !ok {
+			return nil, fmt.Errorf("called non-function of type %v", calleeTy)
+		}
+		if len(e.Args) != len(ft.Params) {
+			return nil, fmt.Errorf("argument count mismatch: expected %d, got %d", len(ft.Params), len(e.Args))
+		}
+		for i, arg := range e.Args {
+			argTy, err := tc.typeCheckExpr(arg, env)
+			if err != nil {
+				return nil, err
+			}
+			if !tc.equalTypes(argTy, ft.Params[i]) {
+				return nil, fmt.Errorf("argument %d type mismatch: expected %v, got %v", i, ft.Params[i], argTy)
+			}
+		}
+		e.Type = ft.Return
+		return ft.Return, nil
 	case *ListExpr:
 		if len(e.Elements) == 0 {
 			e.Type = ListType{Element: nil} // Placeholder for empty list
@@ -1285,6 +1338,18 @@ func (tc *TypeChecker) equalTypes(a, b Type) bool {
 			}
 			return true
 		}
+	case FunctionType:
+		if b1, ok := b.(FunctionType); ok {
+			if len(a1.Params) != len(b1.Params) {
+				return false
+			}
+			for i := range a1.Params {
+				if !tc.equalTypes(a1.Params[i], b1.Params[i]) {
+					return false
+				}
+			}
+			return tc.equalTypes(a1.Return, b1.Return)
+		}
 	}
 	return false
 }
@@ -1327,6 +1392,20 @@ func (tc *TypeChecker) compatible(a, b Type) bool {
 			}
 		}
 		return true
+	case FunctionType:
+		b1, ok := b.(FunctionType)
+		if !ok {
+			return false
+		}
+		if len(a1.Params) != len(b1.Params) {
+			return false
+		}
+		for i := range a1.Params {
+			if !tc.compatible(a1.Params[i], b1.Params[i]) {
+				return false
+			}
+		}
+		return tc.compatible(a1.Return, b1.Return)
 	default:
 		return false
 	}

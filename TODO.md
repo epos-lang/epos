@@ -1,19 +1,20 @@
 # TODO
 - [x] Add kebab case support
 - [x] Add multiple strings (`[[]]`)
-- [x] Add lists (? what to do about `[[1, 2], [2]]` not turning into a mutliline string? -> `@[@[1, 2, 3], @[4, 5, 6]]`?)
+- [x] Add lists (`{1, 2, 3}`)
 - [x] Allow typing of variables
 - [x] Make sure you can make lists of lists
 - [x] Fix multiline comments
-- [!] Make `match` expressions passable as implicit returns
 - [x] Add records
 - [x] Add `type` type (example: `list_of_bool_type: type = list(bool)`)
-- [!] Add function type (example: `add_type: type = fn(int, int) -> int`)
-- [ ] Add string interpolation (example: `"Hello #{name}!"` or `[[Hello #{name}!]]`)
+- [x] Add function type (example: `add_type: type = fn(int, int) -> int`)
+- [ ] Add `len` function to get length of lists (`len({1, 2, 3}) # => 2`)
+- [!] Make `match` expressions passable as implicit returns
+- [!] Add string interpolation (example: `"Hello #{name}!"` or `[[Hello #{name}!]]`)
 - [ ] Add `_` as a discard variable name
-- [ ] Array first/last pattern matching (`[first, ..last]` or `[first | last]` ??) (`@[first | last]`)
+- [ ] Array first/last pattern matching (`{first, ..last}` or `{first | last}` ??)
 - [ ] Add piping operator (`|>`)
 - [ ] Remove `if`/`while` statements
 - [ ] Make variables immutable
 - [ ] Add `assert` keyword (example: `assert(a + b, 3)`)
-- [x] Add static typing
+- [ ] Add generics

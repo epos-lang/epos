@@ -44,6 +44,13 @@ func (cg *CodeGen) toLLVMType(t parser.Type) types.Type {
 		} else if ty == "bool" {
 			return types.I1
 		}
+	case parser.FunctionType:
+		var paramTypes []types.Type
+		for _, p := range ty.Params {
+			paramTypes = append(paramTypes, cg.toLLVMType(p))
+		}
+		funcTy := types.NewFunc(cg.toLLVMType(ty.Return), paramTypes...)
+		return types.NewPointer(funcTy)
 	case parser.ListType:
 		s := types.NewStruct(types.I64, types.NewPointer(cg.toLLVMType(ty.Element)))
 		return types.NewPointer(s)
@@ -82,6 +89,16 @@ func typeToString(t parser.Type) string {
 			}
 		}
 		s += "}"
+		return s
+	case parser.FunctionType:
+		s := "fn("
+		for i, p := range ty.Params {
+			if i > 0 {
+				s += ", "
+			}
+			s += typeToString(p)
+		}
+		s += ") -> " + typeToString(ty.Return)
 		return s
 	default:
 		return "unknown"
@@ -282,6 +299,16 @@ func (cg *CodeGen) genPrint(bb *ir.Block, val value.Value, pty parser.Type, vars
 		if addNewline {
 			bb = cg.printString(bb, "\n")
 		}
+		return bb
+	case parser.FunctionType:
+		bb = cg.printString(bb, "<function ")
+		typeStr := typeToString(pty)
+		strConst := constant.NewCharArrayFromString(typeStr + ">" + nl + "\x00")
+		cg.stringCounter++
+		global := cg.module.NewGlobalDef(fmt.Sprintf("func_type_str_%d", cg.stringCounter), strConst)
+		ptr := bb.NewGetElementPtr(global.Type().(*types.PointerType).ElemType, global, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
+		ptr.InBounds = true
+		bb.NewCall(cg.printf, ptr)
 		return bb
 	}
 	return bb
@@ -519,10 +546,14 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 		return ptr, bb
 	case *parser.VarExpr:
 		v, ok := vars[e.Name]
-		if !ok {
-			panic("undefined variable: " + e.Name)
+		if ok {
+			return bb.NewLoad(cg.toLLVMType(e.Type), v.Alloc), bb
 		}
-		return bb.NewLoad(cg.toLLVMType(e.Type), v.Alloc), bb
+		f, ok := cg.functions[e.Name]
+		if ok {
+			return f, bb
+		}
+		panic("undefined: " + e.Name)
 	case *parser.UnaryExpr:
 		if e.Op == parser.TokenMinus {
 			zero := constant.NewInt(types.I64, 0)
@@ -572,45 +603,42 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 			return nil, bb
 		}
 	case *parser.CallExpr:
-		if e.Callee == "print" {
-			if len(e.Args) != 1 {
-				panic("print takes one argument")
+		var callee value.Value
+		if ve, ok := e.Callee.(*parser.VarExpr); ok {
+			calleeName := ve.Name
+			if calleeName == "print" {
+				val, bb := cg.genExpr(bb, e.Args[0], vars)
+				pty := cg.getParserType(e.Args[0])
+				bb = cg.genPrint(bb, val, pty, vars, true)
+				return constant.NewInt(types.I32, 0), bb
+			} else if calleeName == "elem" {
+				var listPtr, index value.Value
+				listPtr, bb = cg.genExpr(bb, e.Args[0], vars)
+				index, bb = cg.genExpr(bb, e.Args[1], vars)
+				structTy := listPtr.Type().(*types.PointerType).ElemType
+				dataPtrPtr := bb.NewGetElementPtr(structTy, listPtr, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 1))
+				dataPtr := bb.NewLoad(dataPtrPtr.Type().(*types.PointerType).ElemType, dataPtrPtr)
+				elemTy := cg.toLLVMType(e.Type)
+				elemPtr := bb.NewGetElementPtr(elemTy, dataPtr, index)
+				elemPtr.InBounds = true
+				return bb.NewLoad(elemTy, elemPtr), bb
+			} else if vi, ok := vars[calleeName]; ok {
+				callee = bb.NewLoad(vi.Typ, vi.Alloc)
+			} else if f, ok := cg.functions[calleeName]; ok {
+				callee = f
+			} else {
+				panic("undefined: " + calleeName)
 			}
-			val, bb := cg.genExpr(bb, e.Args[0], vars)
-			pty := cg.getParserType(e.Args[0])
-			bb = cg.genPrint(bb, val, pty, vars, true)
-			return constant.NewInt(types.I32, 0), bb
-		} else if e.Callee == "elem" {
-			if len(e.Args) != 2 {
-				panic("elem takes two arguments")
-			}
-			listPtr, bb := cg.genExpr(bb, e.Args[0], vars)
-			index, bb := cg.genExpr(bb, e.Args[1], vars)
-			structTy := listPtr.Type().(*types.PointerType).ElemType
-			//	lengthPtr := bb.NewGetElementPtr(structTy, listPtr, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
-			// length := bb.NewLoad(types.I64, lengthPtr)
-			dataPtrPtr := bb.NewGetElementPtr(structTy, listPtr, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 1))
-			dataPtr := bb.NewLoad(dataPtrPtr.Type().(*types.PointerType).ElemType, dataPtrPtr)
-			elemTy := cg.toLLVMType(e.Type)
-			elemPtr := bb.NewGetElementPtr(elemTy, dataPtr, index)
-			elemPtr.InBounds = true
-			return bb.NewLoad(elemTy, elemPtr), bb
 		} else {
-			f, ok := cg.functions[e.Callee]
-			if !ok {
-				panic("undefined function: " + e.Callee)
-			}
-			var args []value.Value
-			currentBB := bb
-			for _, arg := range e.Args {
-				var argVal value.Value
-				argVal, currentBB = cg.genExpr(currentBB, arg, vars)
-				args = append(args, argVal)
-			}
-			callResult := currentBB.NewCall(f, args...)
-			return callResult, currentBB
+			callee, bb = cg.genExpr(bb, e.Callee, vars)
 		}
-
+		var args []value.Value
+		for _, arg := range e.Args {
+			argVal, _ := cg.genExpr(bb, arg, vars)
+			// argVal, bb := cg.genExpr(bb, arg, vars)
+			args = append(args, argVal)
+		}
+		return bb.NewCall(callee, args...), bb
 	case *parser.MatchExpr:
 		cg.matchCounter++
 		id := cg.matchCounter

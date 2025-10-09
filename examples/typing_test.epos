@@ -57,3 +57,6 @@ print(Persons_Type)
   },
 }
 print(persons)]#
+
+add_fn_type: type = fn(int, int) -> int
+print(add_fn_type)
