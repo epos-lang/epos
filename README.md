@@ -1,9 +1,9 @@
 # Epos
 _The programming language of epic poetry_
 
-Epos draws inspiration from [Lua](https://www.lua.org/), [Nim](https://nim-lang.org/), [Elixir](https://elixir-lang.org/), [Gleam](https://gleam.run/), [Go](https://golang.org/), and [Rust](https://www.rust-lang.org/).
+Epos is a functional statically typed programming language that compiles to LLVM IR.
 
-Epos compiles to LLVM IR and is written in Go.
+Epos draws inspiration from [Lua](https://www.lua.org/), [Nim](https://nim-lang.org/), [Elixir](https://elixir-lang.org/), [Gleam](https://gleam.run/), [Go](https://golang.org/), and [Rust](https://www.rust-lang.org/).
 
 > NOTE: The Epos compiler requires Nix to build.
 
@@ -65,8 +65,5 @@ person: Person = @{
 - Run `./result/bin/epos ./examples/hello.epos`
 - Run `./build/hello`
 
-## Notes/TODO:
-- This is WIP
-- Add static typing
-- Eventually add macros
-- Add stdlib
+## Notes:
+- This is in active development
