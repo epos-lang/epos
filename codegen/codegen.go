@@ -39,7 +39,7 @@ func (cg *CodeGen) toLLVMType(t parser.Type) types.Type {
 	case parser.BasicType:
 		if ty == "int" {
 			return types.I64
-		} else if ty == "string" {
+		} else if ty == "string" || ty == "type" {
 			return types.NewPointer(types.I8)
 		} else if ty == "bool" {
 			return types.I1
@@ -62,6 +62,30 @@ func (cg *CodeGen) toLLVMType(t parser.Type) types.Type {
 		return nil
 	}
 	return nil
+}
+
+func typeToString(t parser.Type) string {
+	switch ty := t.(type) {
+	case parser.BasicType:
+		return string(ty)
+	case parser.ListType:
+		return "list(" + typeToString(ty.Element) + ")"
+	case parser.RecordType:
+		s := "@{"
+		for i, f := range ty.Fields {
+			if i > 0 {
+				s += ", "
+			}
+			s += f.Name + ": " + typeToString(f.Ty)
+			if f.Optional {
+				s += "?"
+			}
+		}
+		s += "}"
+		return s
+	default:
+		return "unknown"
+	}
 }
 
 // NewCodeGen creates a new CodeGen
@@ -111,6 +135,8 @@ func (cg *CodeGen) getParserType(expr parser.Expr) parser.Type {
 		return e.Type
 	case *parser.FieldAccessExpr:
 		return e.Type
+	case *parser.TypeValueExpr:
+		return parser.BasicType("type")
 	default:
 		panic("unknown expr type for getParserType")
 	}
@@ -153,7 +179,7 @@ func (cg *CodeGen) genPrint(bb *ir.Block, val value.Value, pty parser.Type, vars
 			falsePtr.InBounds = true
 			selected := bb.NewSelect(val, truePtr, falsePtr)
 			bb.NewCall(cg.printf, selected)
-		case "string":
+		case "string", "type":
 			strFmt := cg.module.NewGlobalDef(fmt.Sprintf("str_fmt_%d", cg.stringCounter), constant.NewCharArrayFromString("%s"+nl+"\x00"))
 			cg.stringCounter++
 			fmtPtr := bb.NewGetElementPtr(strFmt.Type().(*types.PointerType).ElemType, strFmt, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
@@ -462,8 +488,6 @@ func (cg *CodeGen) genStmt(bb *ir.Block, stmt parser.Stmt, vars map[string]varIn
 		}
 		return mergeBB
 
-	case *parser.RecordDecl:
-		return bb
 	default:
 		panic("unknown statement type")
 	}
@@ -760,6 +784,16 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 			return phi, mergeBB
 		}
 		return val, bb
+	case *parser.TypeValueExpr:
+		str := typeToString(e.Ty)
+		strConst := constant.NewCharArrayFromString(str + "\x00")
+		cg.stringCounter++
+		name := fmt.Sprintf("type_str_%d", cg.stringCounter)
+		globalStr := cg.module.NewGlobalDef(name, strConst)
+		elemType := globalStr.Type().(*types.PointerType).ElemType
+		ptr := bb.NewGetElementPtr(elemType, globalStr, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
+		ptr.InBounds = true
+		return ptr, bb
 	default:
 		panic("unknown expression type")
 		return nil, bb

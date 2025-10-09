@@ -24,5 +24,36 @@ print(greet("World"))
 fn get_first_el(arr: list(int)): int
   elem(arr, 0)
 end
-print(get_first_el([1, 2, 3]))
+print(get_first_el({1, 2, 3}))
 # Should print "1"
+
+bool_type: type = bool
+print(bool_type)
+
+list_of_bool_type: type = list(bool)
+print(list_of_bool_type)
+
+record Person_Type
+  name: string
+  age: int
+end
+print(Person_Type)
+
+Persons_Type: type = list(Person_Type)
+print(Persons_Type)
+
+#[persons: Persons_Type = {
+  @{
+    name => "John",
+    age => 30
+  },
+  @{
+    name => "Brad",
+    age => 30
+  },
+  @{
+    name => "Carter",
+    age => 30
+  },
+}
+print(persons)]#

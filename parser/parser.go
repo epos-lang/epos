@@ -194,6 +194,11 @@ type FieldAccessExpr struct {
 	Type     Type
 }
 
+type TypeValueExpr struct {
+	Ty   Type
+	Type Type
+}
+
 type RecordDecl struct {
 	Name   string
 	Fields []Field
@@ -464,7 +469,16 @@ func (p *Parser) parseAssign() *AssignStmt {
 		declType = p.parseType()
 	}
 	p.consume(TokenAssign)
-	expr := p.parseExpr()
+	var expr Expr
+	if declType != nil {
+		if bt, ok := declType.(BasicType); ok && string(bt) == "type" {
+			expr = &TypeValueExpr{Ty: p.parseType()}
+		} else {
+			expr = p.parseExpr()
+		}
+	} else {
+		expr = p.parseExpr()
+	}
 	return &AssignStmt{Var: varName, DeclType: declType, Expr: expr}
 }
 
@@ -790,7 +804,7 @@ func (p *Parser) parseDot() Expr {
 	return expr
 }
 
-func (p *Parser) parseRecordDecl() *RecordDecl {
+func (p *Parser) parseRecordDecl() *AssignStmt {
 	p.consume(TokenRecord)
 	name := p.consume(TokenIdentifier).Value
 	var fields []Field
@@ -806,7 +820,9 @@ func (p *Parser) parseRecordDecl() *RecordDecl {
 		fields = append(fields, Field{Name: fieldName, Ty: ty, Optional: optional})
 	}
 	p.consume(TokenEnd)
-	return &RecordDecl{Name: name, Fields: fields}
+	ty := RecordType{Fields: fields}
+	expr := &TypeValueExpr{Ty: ty}
+	return &AssignStmt{Var: name, DeclType: BasicType("type"), Expr: expr}
 }
 
 type TypeChecker struct {
@@ -855,16 +871,6 @@ func (tc *TypeChecker) TypeCheck(stmts []Stmt) error {
 				Params []Type
 				Return Type
 			}{Params: params, Return: f.ReturnType}
-		}
-	}
-	// Collect record types
-	for _, stmt := range stmts {
-		if rd, ok := stmt.(*RecordDecl); ok {
-			var fields []Field
-			for _, f := range rd.Fields {
-				fields = append(fields, f)
-			}
-			tc.namedTypes[rd.Name] = RecordType{Fields: fields}
 		}
 	}
 
@@ -931,6 +937,13 @@ func (tc *TypeChecker) typeCheckStmt(stmt Stmt, env map[string]Type) error {
 			}
 			resolveTypes(s.Expr, declType)
 			ty = declType
+			if BasicType("type") == declType {
+				if tve, ok := s.Expr.(*TypeValueExpr); ok {
+					if rt, ok := tve.Ty.(RecordType); ok {
+						tc.namedTypes[s.Var] = rt
+					}
+				}
+			}
 		} else if isUnresolvedPlaceholder(ty) {
 			return fmt.Errorf("cannot infer type for empty list without declaration")
 		}
@@ -1012,13 +1025,7 @@ func (tc *TypeChecker) typeCheckStmt(stmt Stmt, env map[string]Type) error {
 			}
 		}
 		return nil
-	case *RecordDecl:
-		rt := tc.namedTypes[s.Name].(RecordType)
-		for i := range rt.Fields {
-			rt.Fields[i].Ty = tc.resolveType(rt.Fields[i].Ty)
-		}
-		tc.namedTypes[s.Name] = rt
-		return nil
+
 	default:
 		return fmt.Errorf("unsupported statement type")
 	}
@@ -1238,6 +1245,9 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 			}
 		}
 		return nil, fmt.Errorf("field %s not found in record", e.Field)
+	case *TypeValueExpr:
+		e.Type = BasicType("type")
+		return BasicType("type"), nil
 	default:
 		return nil, fmt.Errorf("unsupported expression type")
 	}

@@ -7,9 +7,8 @@
 - [x] Fix multiline comments
 - [!] Make `match` expressions passable as implicit returns
 - [x] Add records
-- [ ] Add `type` keyword (example: `type New_Type = bool`) (?? Do you even need type keyword? Why not just do this: `New_Type = list(bool)`)
-- [ ] Add bracket names for records (example: `@{[key]: value}`)
-- [!] Add function type
+- [x] Add `type` type (example: `list_of_bool_type: type = list(bool)`)
+- [!] Add function type (example: `add_type: type = fn(int, int) -> int`)
 - [ ] Add string interpolation (example: `"Hello #{name}!"` or `[[Hello #{name}!]]`)
 - [ ] Add `_` as a discard variable name
 - [ ] Array first/last pattern matching (`[first, ..last]` or `[first | last]` ??) (`@[first | last]`)

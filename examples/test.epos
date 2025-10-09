@@ -1,9 +1,8 @@
 # test.epos
-msg: string = [[This is a multi-line string.
-It spans several lines
-for readability!]]
 
-print(msg)
-
-num: int = 123
-print(num)
+#[
+fn hello()
+  print([[hello]])
+end
+hello()
+]#
