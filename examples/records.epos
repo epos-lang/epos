@@ -1,0 +1,29 @@
+# Records in Epos
+
+record person_type
+  name: string
+  age: int
+  # optional fields
+  #favorite-color?: string
+end
+person: person_type = @{
+  name => "John Smith",
+  age => 42
+}
+print(person)
+
+#[
+record test-t
+  misc: string
+  list: list(int)
+  record: person_type
+end
+test: test-t = @{
+  misc => "misc",
+  list => [1, 2, 3],
+  record => @{
+    name => "John Smith",
+    age => 42
+  }
+}
+]#

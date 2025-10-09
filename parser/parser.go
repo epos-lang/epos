@@ -2,6 +2,7 @@ package parser
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"unicode"
 )
@@ -49,6 +50,11 @@ const (
 	TokenTypeBool
 	TokenLBrace
 	TokenRBrace
+	TokenRecord
+	TokenAt
+	TokenFatArrow
+	TokenQuestion
+	TokenDot
 )
 
 // Token struct
@@ -167,6 +173,32 @@ type ListType struct {
 	Element Type
 }
 
+type Field struct {
+	Name     string
+	Ty       Type
+	Optional bool
+}
+
+type RecordType struct {
+	Fields []Field
+}
+
+type RecordExpr struct {
+	Fields map[string]Expr
+	Type   Type
+}
+
+type FieldAccessExpr struct {
+	Receiver Expr
+	Field    string
+	Type     Type
+}
+
+type RecordDecl struct {
+	Name   string
+	Fields []Field
+}
+
 type Param struct {
 	Name string
 	Ty   Type
@@ -226,6 +258,9 @@ func (l *Lexer) Lex() []Token {
 			if l.peekChar() == '=' {
 				l.pos++
 				l.addToken(TokenEQ, "==")
+			} else if l.peekChar() == '>' {
+				l.pos++
+				l.addToken(TokenFatArrow, "=>")
 			} else {
 				l.addToken(TokenAssign, "=")
 			}
@@ -251,6 +286,12 @@ func (l *Lexer) Lex() []Token {
 			l.addToken(TokenRBrace, "}")
 		case ch == ':':
 			l.addToken(TokenColon, ":")
+		case ch == '?':
+			l.addToken(TokenQuestion, "?")
+		case ch == '@':
+			l.addToken(TokenAt, "@")
+		case ch == '.':
+			l.addToken(TokenDot, ".")
 		default:
 			panic(fmt.Sprintf("unexpected character: %c", ch))
 		}
@@ -366,6 +407,8 @@ func (l *Lexer) lexIdentifier() {
 		l.tokens = append(l.tokens, Token{Type: TokenTypeList, Value: id})
 	} else if id == "bool" {
 		l.tokens = append(l.tokens, Token{Type: TokenTypeBool, Value: id})
+	} else if id == "record" {
+		l.tokens = append(l.tokens, Token{Type: TokenRecord, Value: id})
 	} else {
 		l.tokens = append(l.tokens, Token{Type: TokenIdentifier, Value: id})
 	}
@@ -403,6 +446,8 @@ func (p *Parser) parseStmt() Stmt {
 		return p.parseWhile()
 	} else if tok.Type == TokenMatch {
 		return p.parseMatch()
+	} else if tok.Type == TokenRecord {
+		return p.parseRecordDecl()
 	} else {
 		return &ExprStmt{Expr: p.parseExpr()}
 	}
@@ -577,7 +622,7 @@ func (p *Parser) parseUnary() Expr {
 		expr := p.parsePrimary()
 		return &UnaryExpr{Op: TokenMinus, Expr: expr}
 	}
-	return p.parsePrimary()
+	return p.parseDot()
 }
 
 func (p *Parser) parsePrimary() Expr {
@@ -656,6 +701,21 @@ func (p *Parser) parsePrimary() Expr {
 		}
 		p.consume(TokenRBrace)
 		return &ListExpr{Elements: elements}
+	case TokenAt:
+		p.pos++
+		p.consume(TokenLBrace)
+		fields := make(map[string]Expr)
+		for p.current().Type != TokenRBrace {
+			field := p.consume(TokenIdentifier).Value
+			p.consume(TokenFatArrow)
+			expr := p.parseExpr()
+			fields[field] = expr
+			if p.current().Type == TokenComma {
+				p.pos++
+			}
+		}
+		p.consume(TokenRBrace)
+		return &RecordExpr{Fields: fields}
 	default:
 		panic(fmt.Sprintf("unexpected token in primary: %v", tok))
 	}
@@ -679,6 +739,9 @@ func (p *Parser) parseType() Type {
 	case TokenTypeBool:
 		p.pos++
 		return BasicType("bool")
+	case TokenIdentifier:
+		p.pos++
+		return BasicType(tok.Value)
 	default:
 		panic(fmt.Sprintf("expected type, got %v", tok))
 	}
@@ -711,18 +774,67 @@ func (p *Parser) consume(tt TokenType) Token {
 	return tok
 }
 
+func (p *Parser) parseDot() Expr {
+	expr := p.parsePrimary()
+	for p.current().Type == TokenDot {
+		p.pos++
+		field := p.consume(TokenIdentifier).Value
+		expr = &FieldAccessExpr{Receiver: expr, Field: field}
+	}
+	return expr
+}
+
+func (p *Parser) parseRecordDecl() *RecordDecl {
+	p.consume(TokenRecord)
+	name := p.consume(TokenIdentifier).Value
+	var fields []Field
+	for p.current().Type != TokenEnd {
+		fieldName := p.consume(TokenIdentifier).Value
+		optional := false
+		if p.current().Type == TokenQuestion {
+			p.consume(TokenQuestion)
+			optional = true
+		}
+		p.consume(TokenColon)
+		ty := p.parseType()
+		fields = append(fields, Field{Name: fieldName, Ty: ty, Optional: optional})
+	}
+	p.consume(TokenEnd)
+	return &RecordDecl{Name: name, Fields: fields}
+}
+
 type TypeChecker struct {
 	funcs map[string]struct {
 		Params []Type
 		Return Type
 	}
+	namedTypes map[string]Type
 }
 
 func NewTypeChecker() *TypeChecker {
 	return &TypeChecker{funcs: make(map[string]struct {
 		Params []Type
 		Return Type
-	})}
+	}), namedTypes: make(map[string]Type)}
+}
+
+func (tc *TypeChecker) resolveType(t Type) Type {
+	switch ty := t.(type) {
+	case BasicType:
+		if rt, ok := tc.namedTypes[string(ty)]; ok {
+			return rt
+		}
+		return ty
+	case ListType:
+		return ListType{Element: tc.resolveType(ty.Element)}
+	case RecordType:
+		for i := range ty.Fields {
+			ty.Fields[i].Ty = tc.resolveType(ty.Fields[i].Ty)
+		}
+		return ty
+	default:
+		return t
+	}
 }
 
 func (tc *TypeChecker) TypeCheck(stmts []Stmt) error {
@@ -737,6 +849,16 @@ func (tc *TypeChecker) TypeCheck(stmts []Stmt) error {
 				Params []Type
 				Return Type
 			}{Params: params, Return: f.ReturnType}
+		}
+	}
+	// Collect record types
+	for _, stmt := range stmts {
+		if rd, ok := stmt.(*RecordDecl); ok {
+			var fields []Field
+			for _, f := range rd.Fields {
+				fields = append(fields, f)
+			}
+			tc.namedTypes[rd.Name] = RecordType{Fields: fields}
 		}
 	}
 
@@ -758,8 +880,10 @@ func (tc *TypeChecker) typeCheckStmt(stmt Stmt, env map[string]Type) error {
 			localEnv[k] = v
 		}
 		for i, p := range s.Params {
-			localEnv[p.Name] = tc.funcs[s.Name].Params[i]
+			s.Params[i].Ty = tc.resolveType(p.Ty)
+			localEnv[p.Name] = s.Params[i].Ty
 		}
+		s.ReturnType = tc.resolveType(s.ReturnType)
 		for _, bodyStmt := range s.Body {
 			if err := tc.typeCheckStmt(bodyStmt, localEnv); err != nil {
 				return err
@@ -772,8 +896,9 @@ func (tc *TypeChecker) typeCheckStmt(stmt Stmt, env map[string]Type) error {
 				if err != nil {
 					return err
 				}
+				retTy = tc.resolveType(retTy)
 				if s.ReturnType != nil {
-					if !compatible(retTy, s.ReturnType) {
+					if !tc.compatible(retTy, s.ReturnType) {
 						return fmt.Errorf("return type mismatch: expected %v, got %v", s.ReturnType, retTy)
 					}
 					resolveTypes(ret.Expr, s.ReturnType)
@@ -792,17 +917,19 @@ func (tc *TypeChecker) typeCheckStmt(stmt Stmt, env map[string]Type) error {
 		if err != nil {
 			return err
 		}
+		ty = tc.resolveType(ty)
 		if s.DeclType != nil {
-			if !compatible(ty, s.DeclType) {
-				return fmt.Errorf("type mismatch: expected %v, got %v", s.DeclType, ty)
+			declType := tc.resolveType(s.DeclType)
+			if !tc.compatible(ty, declType) {
+				return fmt.Errorf("type mismatch: expected %v, got %v", declType, ty)
 			}
-			resolveTypes(s.Expr, s.DeclType)
-			ty = s.DeclType
+			resolveTypes(s.Expr, declType)
+			ty = declType
 		} else if isUnresolvedPlaceholder(ty) {
 			return fmt.Errorf("cannot infer type for empty list without declaration")
 		}
 		if existing, ok := env[s.Var]; ok {
-			if !equalTypes(existing, ty) {
+			if !tc.equalTypes(existing, ty) {
 				return fmt.Errorf("reassignment type mismatch: expected %v, got %v", existing, ty)
 			}
 			if s.DeclType != nil {
@@ -865,7 +992,7 @@ func (tc *TypeChecker) typeCheckStmt(stmt Stmt, env map[string]Type) error {
 				if err != nil {
 					return err
 				}
-				if !equalTypes(valTy, matchTy) {
+				if !tc.equalTypes(valTy, matchTy) {
 					return fmt.Errorf("case type mismatch")
 				}
 			}
@@ -878,6 +1005,13 @@ func (tc *TypeChecker) typeCheckStmt(stmt Stmt, env map[string]Type) error {
 				return err
 			}
 		}
+		return nil
+	case *RecordDecl:
+		rt := tc.namedTypes[s.Name].(RecordType)
+		for i := range rt.Fields {
+			rt.Fields[i].Ty = tc.resolveType(rt.Fields[i].Ty)
+		}
+		tc.namedTypes[s.Name] = rt
 		return nil
 	default:
 		return fmt.Errorf("unsupported statement type")
@@ -924,7 +1058,7 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 		if err != nil {
 			return nil, err
 		}
-		if equalTypes(leftTy, rightTy) {
+		if tc.equalTypes(leftTy, rightTy) {
 			if leftTy == BasicType("int") && isNumberOp(e.Op) {
 				e.Type = BasicType("int")
 				return BasicType("int"), nil
@@ -981,7 +1115,7 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 				if err != nil {
 					return nil, err
 				}
-				if !equalTypes(argTy, sig.Params[i]) {
+				if !tc.equalTypes(argTy, sig.Params[i]) {
 					return nil, fmt.Errorf("argument type mismatch")
 				}
 			}
@@ -1006,7 +1140,7 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 					// ok
 				} else if isPlaceholder(elemTy) {
 					elemTy = ty
-				} else if !equalTypes(ty, elemTy) {
+				} else if !tc.equalTypes(ty, elemTy) {
 					return nil, fmt.Errorf("list elements have different types")
 				}
 			}
@@ -1019,6 +1153,7 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 		if err != nil {
 			return nil, err
 		}
+		matchTy = tc.resolveType(matchTy)
 		var resultTy Type
 		for _, cas := range e.Cases {
 			for _, val := range cas.Values {
@@ -1026,7 +1161,8 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 				if err != nil {
 					return nil, err
 				}
-				if !equalTypes(valTy, matchTy) {
+				valTy = tc.resolveType(valTy)
+				if !tc.equalTypes(valTy, matchTy) {
 					return nil, fmt.Errorf("match case type mismatch")
 				}
 			}
@@ -1034,9 +1170,10 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 			if err != nil {
 				return nil, err
 			}
+			bodyTy = tc.resolveType(bodyTy)
 			if resultTy == nil {
 				resultTy = bodyTy
-			} else if !equalTypes(resultTy, bodyTy) {
+			} else if !tc.equalTypes(resultTy, bodyTy) {
 				return nil, fmt.Errorf("match arms have different types")
 			}
 		}
@@ -1045,9 +1182,10 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 			if err != nil {
 				return nil, err
 			}
+			defTy = tc.resolveType(defTy)
 			if resultTy == nil {
 				resultTy = defTy
-			} else if !equalTypes(resultTy, defTy) {
+			} else if !tc.equalTypes(resultTy, defTy) {
 				return nil, fmt.Errorf("match default type mismatch")
 			}
 		}
@@ -1056,12 +1194,52 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 		}
 		e.Type = resultTy
 		return resultTy, nil
+	case *RecordExpr:
+		fieldTypes := make(map[string]Type)
+		for name, ex := range e.Fields {
+			fty, err := tc.typeCheckExpr(ex, env)
+			if err != nil {
+				return nil, err
+			}
+			fieldTypes[name] = tc.resolveType(fty)
+		}
+		var keys []string
+		for k := range fieldTypes {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		var fields []Field
+		for _, k := range keys {
+			fields = append(fields, Field{Name: k, Ty: fieldTypes[k], Optional: false})
+		}
+		ty := RecordType{Fields: fields}
+		e.Type = ty
+		return ty, nil
+	case *FieldAccessExpr:
+		recTy, err := tc.typeCheckExpr(e.Receiver, env)
+		if err != nil {
+			return nil, err
+		}
+		recTy = tc.resolveType(recTy)
+		rt, ok := recTy.(RecordType)
+		if !ok {
+			return nil, fmt.Errorf("field access on non-record")
+		}
+		for _, f := range rt.Fields {
+			if f.Name == e.Field {
+				e.Type = f.Ty
+				return f.Ty, nil
+			}
+		}
+		return nil, fmt.Errorf("field %s not found in record", e.Field)
 	default:
 		return nil, fmt.Errorf("unsupported expression type")
 	}
 }
 
-func equalTypes(a, b Type) bool {
+func (tc *TypeChecker) equalTypes(a, b Type) bool {
+	a = tc.resolveType(a)
+	b = tc.resolveType(b)
 	if a == nil && b == nil {
 		return true
 	}
@@ -1075,13 +1253,29 @@ func equalTypes(a, b Type) bool {
 		}
 	case ListType:
 		if b1, ok := b.(ListType); ok {
-			return equalTypes(a1.Element, b1.Element)
+			return tc.equalTypes(a1.Element, b1.Element)
+		}
+	case RecordType:
+		if b1, ok := b.(RecordType); ok {
+			if len(a1.Fields) != len(b1.Fields) {
+				return false
+			}
+			for i := range a1.Fields {
+				if a1.Fields[i].Name != b1.Fields[i].Name ||
+					!tc.equalTypes(a1.Fields[i].Ty, b1.Fields[i].Ty) ||
+					a1.Fields[i].Optional != b1.Fields[i].Optional {
+					return false
+				}
+			}
+			return true
 		}
 	}
 	return false
 }
 
-func compatible(a, b Type) bool {
+func (tc *TypeChecker) compatible(a, b Type) bool {
+	a = tc.resolveType(a)
+	b = tc.resolveType(b)
 	if a == nil {
 		return true
 	}
@@ -1094,7 +1288,29 @@ func compatible(a, b Type) bool {
 		return ok && a1 == b1
 	case ListType:
 		b1, ok := b.(ListType)
-		return ok && compatible(a1.Element, b1.Element)
+		return ok && tc.compatible(a1.Element, b1.Element)
+	case RecordType:
+		b1, ok := b.(RecordType)
+		if !ok {
+			return false
+		}
+		fieldMapA := make(map[string]Type)
+		for _, f := range a1.Fields {
+			fieldMapA[f.Name] = f.Ty
+		}
+		for _, f := range b1.Fields {
+			ftyA, ok := fieldMapA[f.Name]
+			if !ok {
+				if !f.Optional {
+					return false
+				}
+				continue
+			}
+			if !tc.compatible(ftyA, f.Ty) {
+				return false
+			}
+		}
+		return true
 	default:
 		return false
 	}
@@ -1128,6 +1344,8 @@ func resolveTypes(expr Expr, ty Type) {
 				resolveTypes(elem, lt.Element)
 			}
 		}
+	} else if re, ok := expr.(*RecordExpr); ok {
+		re.Type = ty
 	}
 }
 

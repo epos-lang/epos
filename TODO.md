@@ -3,23 +3,18 @@
 - [x] Add multiple strings (`[[]]`)
 - [x] Add lists (? what to do about `[[1, 2], [2]]` not turning into a mutliline string? -> `@[@[1, 2, 3], @[4, 5, 6]]`?)
 - [x] Allow typing of variables
-- [ ] Make sure you can make lists of lists
-- [ ] Fix multiline comments
-- [ ] Make `match` expressions passable as implicit returns
-- [ ] Add objects (
-```epos
-struct Person
-  name: string,
-  age: int,
-  value: string,
-end
-person: Person = {name => "John", age => 30, [value] => key}
-```
-)
-- [ ] Add function type
+- [x] Make sure you can make lists of lists
+- [!] Fix multiline comments
+- [!] Make `match` expressions passable as implicit returns
+- [.] Add records
+- [ ] Add `type` keyword (example: `type New_Type = bool`) (?? Do you even need type keyword? Why not just do this: `New_Type = list(bool)`)
+- [ ] Add bracket names for records (example: `@{[key]: value}`)
+- [!] Add function type
+- [ ] Add string interpolation (example: `"Hello #{name}!"` or `[[Hello #{name}!]]`)
 - [ ] Add `_` as a discard variable name
 - [ ] Array first/last pattern matching (`[first, ..last]` or `[first | last]` ??) (`@[first | last]`)
 - [ ] Add piping operator (`|>`)
 - [ ] Remove `if`/`while` statements
 - [ ] Make variables immutable
+- [ ] Add `assert` keyword (example: `assert(a + b, 3)`)
 - [x] Add static typing

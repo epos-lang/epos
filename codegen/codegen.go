@@ -3,6 +3,7 @@ package codegen
 import (
 	"epos/parser"
 	"fmt"
+	"strconv"
 
 	"github.com/llir/llvm/ir"
 	"github.com/llir/llvm/ir/constant"
@@ -24,6 +25,7 @@ type CodeGen struct {
 	matchCounter                   int
 	stringCounter                  int
 	listPrintCounter               int
+	recordPrintCounter             int
 	strlen, strcpy, strcat, malloc *ir.Func
 }
 
@@ -45,6 +47,16 @@ func (cg *CodeGen) toLLVMType(t parser.Type) types.Type {
 	case parser.ListType:
 		s := types.NewStruct(types.I64, types.NewPointer(cg.toLLVMType(ty.Element)))
 		return types.NewPointer(s)
+	case parser.RecordType:
+		var fieldTypes []types.Type
+		for _, f := range ty.Fields {
+			ft := cg.toLLVMType(f.Ty)
+			if f.Optional {
+				ft = types.NewPointer(ft)
+			}
+			fieldTypes = append(fieldTypes, ft)
+		}
+		return types.NewPointer(types.NewStruct(fieldTypes...))
 	default:
 		panic("unsupported type")
 		return nil
@@ -59,9 +71,9 @@ func NewCodeGen() *CodeGen {
 	printf := m.NewFunc("printf", types.I32, ir.NewParam("", types.NewPointer(types.I8)))
 	printf.Sig.Variadic = true
 
-	fmtStr := constant.NewCharArrayFromString("%f\n\x00")
+	fmtStr := constant.NewCharArrayFromString("%f\x00")
 	globalFmt := m.NewGlobalDef("fmt", fmtStr)
-	strFmtStr := constant.NewCharArrayFromString("%s\n\x00")
+	strFmtStr := constant.NewCharArrayFromString("%s\x00")
 	strFmt := m.NewGlobalDef("strfmt", strFmtStr)
 
 	strlen := m.NewFunc("strlen", types.I64, ir.NewParam("", types.NewPointer(types.I8)))
@@ -72,7 +84,7 @@ func NewCodeGen() *CodeGen {
 
 	malloc := m.NewFunc("malloc", types.NewPointer(types.I8), ir.NewParam("", types.I64))
 
-	return &CodeGen{module: m, vars: make(map[string]varInfo), functions: make(map[string]*ir.Func), printf: printf, globalFmt: globalFmt, strFmt: strFmt, ifCounter: 0, whileCounter: 0, matchCounter: 0, stringCounter: 0, listPrintCounter: 0, strlen: strlen, strcpy: strcpy, strcat: strcat, malloc: malloc}
+	return &CodeGen{module: m, vars: make(map[string]varInfo), functions: make(map[string]*ir.Func), printf: printf, globalFmt: globalFmt, strFmt: strFmt, ifCounter: 0, whileCounter: 0, matchCounter: 0, stringCounter: 0, listPrintCounter: 0, recordPrintCounter: 0, strlen: strlen, strcpy: strcpy, strcat: strcat, malloc: malloc}
 }
 
 func (cg *CodeGen) getParserType(expr parser.Expr) parser.Type {
@@ -202,6 +214,43 @@ func (cg *CodeGen) genPrint(bb *ir.Block, val value.Value, pty parser.Type, vars
 		}
 		afterBB = cg.printString(afterBB, s)
 		return afterBB
+	case parser.RecordType:
+		bb = cg.printString(bb, "@{")
+		structPtr := val
+		structTy := structPtr.Type().(*types.PointerType).ElemType
+		rt := pty.(parser.RecordType)
+		first := true
+		for i, f := range rt.Fields {
+			fieldPtr := bb.NewGetElementPtr(structTy, structPtr, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, int64(i)))
+			fieldPtr.InBounds = true
+			fieldVal := bb.NewLoad(fieldPtr.Type().(*types.PointerType).ElemType, fieldPtr)
+			skipBB := bb.Parent.NewBlock("skip_" + strconv.Itoa(i))
+			printBB := bb.Parent.NewBlock("print_" + strconv.Itoa(i))
+			if f.Optional {
+				null := constant.NewNull(fieldVal.Type().(*types.PointerType))
+				isNull := bb.NewICmp(enum.IPredEQ, fieldVal, null)
+				bb.NewCondBr(isNull, skipBB, printBB)
+			} else {
+				bb.NewBr(printBB)
+			}
+			bb = printBB
+			if !first {
+				printBB = cg.printString(printBB, ", ")
+			}
+			first = false
+			printBB = cg.printString(printBB, f.Name+" => ")
+			if f.Optional {
+				fieldVal = printBB.NewLoad(fieldVal.Type().(*types.PointerType).ElemType, fieldVal)
+			}
+			printBB = cg.genPrint(printBB, fieldVal, f.Ty, vars, false)
+			printBB.NewBr(skipBB)
+			bb = skipBB
+		}
+		bb = cg.printString(bb, "}")
+		if addNewline {
+			bb = cg.printString(bb, "\n")
+		}
+		return bb
 	}
 	return bb
 }
@@ -407,6 +456,8 @@ func (cg *CodeGen) genStmt(bb *ir.Block, stmt parser.Stmt, vars map[string]varIn
 		}
 		return mergeBB
 
+	case *parser.RecordDecl:
+		return bb
 	default:
 		panic("unknown statement type")
 	}
@@ -600,7 +651,12 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 			return constant.NewNull(cg.toLLVMType(e.Type).(*types.PointerType)), bb
 		}
 		arrayTy := types.NewArray(uint64(len(e.Elements)), elemTy)
-		arrayAlloc := bb.NewAlloca(arrayTy)
+		nullPtrArray := constant.NewNull(types.NewPointer(arrayTy))
+		sizePtrArray := bb.NewGetElementPtr(arrayTy, nullPtrArray, constant.NewInt(types.I64, 1))
+		sizePtrArray.InBounds = true
+		sizeArray := bb.NewPtrToInt(sizePtrArray, types.I64)
+		mallocedArray := bb.NewCall(cg.malloc, sizeArray)
+		arrayAlloc := bb.NewBitCast(mallocedArray, types.NewPointer(arrayTy))
 		for i, el := range e.Elements {
 			val, bb := cg.genExpr(bb, el, vars)
 			ptr := bb.NewGetElementPtr(arrayTy, arrayAlloc, constant.NewInt(types.I32, 0), constant.NewInt(types.I64, int64(i)))
@@ -610,12 +666,70 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 		dataPtr := bb.NewGetElementPtr(arrayTy, arrayAlloc, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
 		dataPtr.InBounds = true
 		structTy := types.NewStruct(types.I64, types.NewPointer(elemTy))
-		structAlloc := bb.NewAlloca(structTy)
+		nullPtrStruct := constant.NewNull(types.NewPointer(structTy))
+		sizePtrStruct := bb.NewGetElementPtr(structTy, nullPtrStruct, constant.NewInt(types.I64, 1))
+		sizePtrStruct.InBounds = true
+		sizeStruct := bb.NewPtrToInt(sizePtrStruct, types.I64)
+		mallocedStruct := bb.NewCall(cg.malloc, sizeStruct)
+		structAlloc := bb.NewBitCast(mallocedStruct, types.NewPointer(structTy))
 		lengthPtr := bb.NewGetElementPtr(structTy, structAlloc, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
 		bb.NewStore(constant.NewInt(types.I64, int64(len(e.Elements))), lengthPtr)
 		dataFieldPtr := bb.NewGetElementPtr(structTy, structAlloc, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 1))
 		bb.NewStore(dataPtr, dataFieldPtr)
 		return structAlloc, bb
+	case *parser.RecordExpr:
+		structTy := cg.toLLVMType(e.Type).(*types.PointerType).ElemType
+		nullPtr := constant.NewNull(types.NewPointer(structTy))
+		sizePtr := bb.NewGetElementPtr(structTy, nullPtr, constant.NewInt(types.I64, 1))
+		sizePtr.InBounds = true
+		size := bb.NewPtrToInt(sizePtr, types.I64)
+		malloced := bb.NewCall(cg.malloc, size)
+		alloc := bb.NewBitCast(malloced, types.NewPointer(structTy))
+		fieldIndex := 0
+		rt := e.Type.(parser.RecordType)
+		for _, f := range rt.Fields {
+			fieldPtr := bb.NewGetElementPtr(structTy, alloc, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, int64(fieldIndex)))
+			fieldPtr.InBounds = true
+			fieldIndex++
+			if valExpr, ok := e.Fields[f.Name]; ok {
+				val, bb := cg.genExpr(bb, valExpr, vars)
+				if f.Optional {
+					falloc := bb.NewAlloca(val.Type())
+					bb.NewStore(val, falloc)
+					bb.NewStore(falloc, fieldPtr)
+				} else {
+					bb.NewStore(val, fieldPtr)
+				}
+			} else {
+				if !f.Optional {
+					panic("missing required field " + f.Name)
+				}
+				bb.NewStore(constant.NewNull(fieldPtr.Type().(*types.PointerType)), fieldPtr)
+			}
+		}
+		return alloc, bb
+	case *parser.FieldAccessExpr:
+		rec, bb := cg.genExpr(bb, e.Receiver, vars)
+		recParserTy := cg.getParserType(e.Receiver)
+		rt := recParserTy.(parser.RecordType)
+		fieldIndex := -1
+		for i, f := range rt.Fields {
+			if f.Name == e.Field {
+				fieldIndex = i
+				break
+			}
+		}
+		if fieldIndex == -1 {
+			panic("field not found: " + e.Field)
+		}
+		structTy := rec.Type().(*types.PointerType).ElemType
+		fieldPtr := bb.NewGetElementPtr(structTy, rec, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, int64(fieldIndex)))
+		fieldPtr.InBounds = true
+		val := bb.NewLoad(fieldPtr.Type().(*types.PointerType).ElemType, fieldPtr)
+		if rt.Fields[fieldIndex].Optional {
+			val = bb.NewLoad(val.Type().(*types.PointerType).ElemType, val)
+		}
+		return val, bb
 	default:
 		panic("unknown expression type")
 		return nil, bb
