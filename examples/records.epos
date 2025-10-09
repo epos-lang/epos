@@ -14,18 +14,17 @@ print(person)
 print(person.name)
 print(person["age"])
 
-#[
 record test-t
   misc: string
   list: list(int)
-  record: person_type
+  person: person_type
 end
 test: test-t = @{
   misc => "misc",
-  list => [1, 2, 3],
-  record => @{
+  list => {1, 2, 3},
+  person => @{
     name => "John Smith",
     age => 42
   }
 }
-]#
+print(test)

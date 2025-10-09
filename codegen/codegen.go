@@ -224,12 +224,14 @@ func (cg *CodeGen) genPrint(bb *ir.Block, val value.Value, pty parser.Type, vars
 		structTy := structPtr.Type().(*types.PointerType).ElemType
 		rt := pty.(parser.RecordType)
 		first := true
+		cg.recordPrintCounter++
+		id := cg.recordPrintCounter
 		for i, f := range rt.Fields {
 			fieldPtr := bb.NewGetElementPtr(structTy, structPtr, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, int64(i)))
 			fieldPtr.InBounds = true
 			fieldVal := bb.NewLoad(fieldPtr.Type().(*types.PointerType).ElemType, fieldPtr)
-			skipBB := bb.Parent.NewBlock("skip_" + strconv.Itoa(i))
-			printBB := bb.Parent.NewBlock("print_" + strconv.Itoa(i))
+			skipBB := bb.Parent.NewBlock(fmt.Sprintf("skip_%d_%d", id, i))
+			printBB := bb.Parent.NewBlock(fmt.Sprintf("print_%d_%d", id, i))
 			if f.Optional {
 				null := constant.NewNull(fieldVal.Type().(*types.PointerType))
 				isNull := bb.NewICmp(enum.IPredEQ, fieldVal, null)

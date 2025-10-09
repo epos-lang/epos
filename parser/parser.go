@@ -399,14 +399,6 @@ func (l *Lexer) lexIdentifier() {
 		l.tokens = append(l.tokens, Token{Type: TokenTrue, Value: id})
 	} else if id == "false" {
 		l.tokens = append(l.tokens, Token{Type: TokenFalse, Value: id})
-	} else if id == "int" {
-		l.tokens = append(l.tokens, Token{Type: TokenTypeInt, Value: id})
-	} else if id == "string" {
-		l.tokens = append(l.tokens, Token{Type: TokenTypeString, Value: id})
-	} else if id == "list" {
-		l.tokens = append(l.tokens, Token{Type: TokenTypeList, Value: id})
-	} else if id == "bool" {
-		l.tokens = append(l.tokens, Token{Type: TokenTypeBool, Value: id})
 	} else if id == "record" {
 		l.tokens = append(l.tokens, Token{Type: TokenRecord, Value: id})
 	} else {
@@ -722,28 +714,21 @@ func (p *Parser) parsePrimary() Expr {
 }
 
 func (p *Parser) parseType() Type {
-	tok := p.current()
-	switch tok.Type {
-	case TokenTypeInt:
-		p.pos++
+	tok := p.consume(TokenIdentifier)
+	switch tok.Value {
+	case "int":
 		return BasicType("int")
-	case TokenTypeString:
-		p.pos++
+	case "string":
 		return BasicType("string")
-	case TokenTypeList:
-		p.pos++
+	case "bool":
+		return BasicType("bool")
+	case "list":
 		p.consume(TokenLParen)
 		elem := p.parseType()
 		p.consume(TokenRParen)
 		return ListType{Element: elem}
-	case TokenTypeBool:
-		p.pos++
-		return BasicType("bool")
-	case TokenIdentifier:
-		p.pos++
-		return BasicType(tok.Value)
 	default:
-		panic(fmt.Sprintf("expected type, got %v", tok))
+		return BasicType(tok.Value)
 	}
 }
 
@@ -1356,6 +1341,13 @@ func resolveTypes(expr Expr, ty Type) {
 		}
 	} else if re, ok := expr.(*RecordExpr); ok {
 		re.Type = ty
+		if rt, ok := ty.(RecordType); ok {
+			for _, f := range rt.Fields {
+				if fieldExpr, ok := re.Fields[f.Name]; ok {
+					resolveTypes(fieldExpr, f.Ty)
+				}
+			}
+		}
 	}
 }
 
