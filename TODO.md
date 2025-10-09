@@ -4,9 +4,9 @@
 - [x] Add lists (? what to do about `[[1, 2], [2]]` not turning into a mutliline string? -> `@[@[1, 2, 3], @[4, 5, 6]]`?)
 - [x] Allow typing of variables
 - [x] Make sure you can make lists of lists
-- [!] Fix multiline comments
+- [x] Fix multiline comments
 - [!] Make `match` expressions passable as implicit returns
-- [.] Add records
+- [x] Add records
 - [ ] Add `type` keyword (example: `type New_Type = bool`) (?? Do you even need type keyword? Why not just do this: `New_Type = list(bool)`)
 - [ ] Add bracket names for records (example: `@{[key]: value}`)
 - [!] Add function type

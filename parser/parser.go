@@ -304,10 +304,21 @@ func (l *Lexer) lexComment() {
 	l.pos++ // skip #
 	if l.pos < len(l.input) && l.input[l.pos] == '[' {
 		l.pos++ // skip [
+		depth := 1
 		for l.pos < len(l.input) {
-			if l.pos+1 < len(l.input) && l.input[l.pos] == ']' && l.input[l.pos+1] == '#' {
-				l.pos += 2
-				return
+			if l.pos+1 < len(l.input) {
+				if l.input[l.pos] == '#' && l.input[l.pos+1] == '[' {
+					depth++
+					l.pos += 2
+					continue
+				} else if l.input[l.pos] == ']' && l.input[l.pos+1] == '#' {
+					depth--
+					l.pos += 2
+					if depth == 0 {
+						return
+					}
+					continue
+				}
 			}
 			l.pos++
 		}
