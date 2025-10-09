@@ -4,13 +4,15 @@ record person_type
   name: string
   age: int
   # optional fields
-  #favorite-color?: string
+  favorite-color?: string
 end
 person: person_type = @{
   name => "John Smith",
   age => 42
 }
 print(person)
+print(person.name)
+print(person["age"])
 
 #[
 record test-t

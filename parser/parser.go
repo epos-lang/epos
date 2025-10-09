@@ -776,10 +776,20 @@ func (p *Parser) consume(tt TokenType) Token {
 
 func (p *Parser) parseDot() Expr {
 	expr := p.parsePrimary()
-	for p.current().Type == TokenDot {
-		p.pos++
-		field := p.consume(TokenIdentifier).Value
-		expr = &FieldAccessExpr{Receiver: expr, Field: field}
+	for {
+		tok := p.current()
+		if tok.Type == TokenDot {
+			p.pos++
+			field := p.consume(TokenIdentifier).Value
+			expr = &FieldAccessExpr{Receiver: expr, Field: field}
+		} else if tok.Type == TokenLBracket {
+			p.pos++
+			fieldTok := p.consume(TokenString)
+			p.consume(TokenRBracket)
+			expr = &FieldAccessExpr{Receiver: expr, Field: fieldTok.Value}
+		} else {
+			break
+		}
 	}
 	return expr
 }

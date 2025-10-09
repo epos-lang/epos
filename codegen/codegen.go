@@ -107,6 +107,10 @@ func (cg *CodeGen) getParserType(expr parser.Expr) parser.Type {
 		return e.Type
 	case *parser.ListExpr:
 		return e.Type
+	case *parser.RecordExpr:
+		return e.Type
+	case *parser.FieldAccessExpr:
+		return e.Type
 	default:
 		panic("unknown expr type for getParserType")
 	}
@@ -704,7 +708,8 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 				if !f.Optional {
 					panic("missing required field " + f.Name)
 				}
-				bb.NewStore(constant.NewNull(fieldPtr.Type().(*types.PointerType)), fieldPtr)
+				elemType := fieldPtr.Type().(*types.PointerType).ElemType
+				bb.NewStore(constant.NewNull(elemType.(*types.PointerType)), fieldPtr)
 			}
 		}
 		return alloc, bb
@@ -727,7 +732,30 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 		fieldPtr.InBounds = true
 		val := bb.NewLoad(fieldPtr.Type().(*types.PointerType).ElemType, fieldPtr)
 		if rt.Fields[fieldIndex].Optional {
-			val = bb.NewLoad(val.Type().(*types.PointerType).ElemType, val)
+			null := constant.NewNull(val.Type().(*types.PointerType))
+			isNull := bb.NewICmp(enum.IPredEQ, val, null)
+			nullBB := bb.Parent.NewBlock("null_field_" + strconv.Itoa(fieldIndex))
+			loadBB := bb.Parent.NewBlock("load_field_" + strconv.Itoa(fieldIndex))
+			mergeBB := bb.Parent.NewBlock("merge_field_" + strconv.Itoa(fieldIndex))
+			bb.NewCondBr(isNull, nullBB, loadBB)
+			var zeroVal value.Value
+			switch typ := cg.toLLVMType(e.Type).(type) {
+			case *types.IntType:
+				if typ.BitSize == 1 {
+					zeroVal = constant.NewBool(false)
+				} else {
+					zeroVal = constant.NewInt(typ, 0)
+				}
+			case *types.PointerType:
+				zeroVal = constant.NewNull(typ)
+			default:
+				panic("unsupported type for zero value")
+			}
+			nullBB.NewBr(mergeBB)
+			loaded := loadBB.NewLoad(val.Type().(*types.PointerType).ElemType, val)
+			loadBB.NewBr(mergeBB)
+			phi := mergeBB.NewPhi(ir.NewIncoming(zeroVal, nullBB), ir.NewIncoming(loaded, loadBB))
+			return phi, mergeBB
 		}
 		return val, bb
 	default:
