@@ -920,10 +920,9 @@ func (cg *CodeGen) genListEquality(bb *ir.Block, left, right value.Value, elemTy
 	id := cg.listPrintCounter
 	notEqBB := bb.Parent.NewBlock(fmt.Sprintf("list_not_eq_%d", id))
 	checkElementsBB := bb.Parent.NewBlock(fmt.Sprintf("list_check_elements_%d", id))
+	finalEqBB := bb.Parent.NewBlock(fmt.Sprintf("list_eq_final_%d", id))
 	bb.NewCondBr(lengthEq, checkElementsBB, notEqBB)
-	notEqListFinalBB := bb.Parent.NewBlock(fmt.Sprintf("list_not_eq_final_%d", id))
-	notEqListFinalBB.NewBr(notEqListFinalBB.Parent.NewBlock(fmt.Sprintf("list_not_eq_final_exit_%d", id)).NewRet(constant.NewBool(false)))
-	notEqBB.NewBr(notEqListFinalBB)
+	notEqBB.NewBr(finalEqBB)
 	bb = checkElementsBB
 	zero := constant.NewInt(types.I64, 0)
 	isZero := bb.NewICmp(enum.IPredEQ, leftLength, zero)
@@ -933,7 +932,7 @@ func (cg *CodeGen) genListEquality(bb *ir.Block, left, right value.Value, elemTy
 	loopIncBB := bb.Parent.NewBlock(fmt.Sprintf("list_loop_inc_eq_%d", id))
 	eqBB := bb.Parent.NewBlock(fmt.Sprintf("list_eq_%d", id))
 	bb.NewCondBr(isZero, zeroBB, loopCondBB)
-	zeroBB.NewBr(zeroBB.Parent.NewBlock(fmt.Sprintf("list_zero_eq_exit_%d", id)).NewRet(constant.NewBool(true)))
+	zeroBB.NewBr(finalEqBB)
 
 	i := loopCondBB.NewPhi(ir.NewIncoming(zero, checkElementsBB))
 	cmp := loopCondBB.NewICmp(enum.IPredSLT, i, leftLength)
@@ -962,15 +961,19 @@ func (cg *CodeGen) genListEquality(bb *ir.Block, left, right value.Value, elemTy
 	}
 	notEqElemBB := loopBodyBB.Parent.NewBlock(fmt.Sprintf("list_not_eq_elem_%d", id))
 	loopBodyBB.NewCondBr(elemEq, loopIncBB, notEqElemBB)
-	notEqListElemFinalBB := loopBodyBB.Parent.NewBlock(fmt.Sprintf("list_not_eq_elem_final_%d", id))
-	notEqListElemFinalBB.NewBr(notEqListElemFinalBB.Parent.NewBlock(fmt.Sprintf("list_not_eq_elem_final_exit_%d", id)).NewRet(constant.NewBool(false)))
-	notEqElemBB.NewBr(notEqListElemFinalBB)
+	notEqElemBB.NewBr(finalEqBB)
 	incI := loopIncBB.NewAdd(i, constant.NewInt(types.I64, 1))
 	loopIncBB.NewBr(loopCondBB)
 	i.Incs = append(i.Incs, ir.NewIncoming(incI, loopIncBB))
-	finalEqBB := bb.Parent.NewBlock(fmt.Sprintf("list_eq_final_%d", id))
-	finalEqBB.NewRet(constant.NewBool(true))
-	return lengthEq // Return value for list length equality check, actual result determined by control flow
+	
+	// Create phi node for final result
+	result := finalEqBB.NewPhi(
+		ir.NewIncoming(constant.NewBool(false), notEqBB),
+		ir.NewIncoming(constant.NewBool(true), zeroBB),
+		ir.NewIncoming(constant.NewBool(true), eqBB),
+		ir.NewIncoming(constant.NewBool(false), notEqElemBB),
+	)
+	return result
 }
 
 func (cg *CodeGen) genRecordEquality(bb *ir.Block, left, right value.Value, recType parser.RecordType) value.Value {
@@ -991,9 +994,8 @@ func (cg *CodeGen) genRecordEquality(bb *ir.Block, left, right value.Value, recT
 			bothNull := bb.NewAnd(leftNull, rightNull)
 			notEqBB := bb.Parent.NewBlock(fmt.Sprintf("rec_not_eq_null_%d_%d", id, i))
 			checkValBB := bb.Parent.NewBlock(fmt.Sprintf("rec_check_val_%d_%d", id, i))
-			bb.NewCondBr(bothNull, checkValBB, notEqBB)
 			notEqRecFinalBB := bb.Parent.NewBlock(fmt.Sprintf("rec_not_eq_final_%d", id))
-			notEqRecFinalBB.NewBr(notEqRecFinalBB.Parent.NewBlock(fmt.Sprintf("rec_not_eq_final_exit_%d", id)).NewRet(constant.NewBool(false)))
+			bb.NewCondBr(bothNull, checkValBB, notEqBB)
 			notEqBB.NewBr(notEqRecFinalBB)
 			bb = checkValBB
 			leftNotNull := bb.NewICmp(enum.IPredNE, leftField, constant.NewNull(leftField.Type().(*types.PointerType)))
@@ -1002,9 +1004,7 @@ func (cg *CodeGen) genRecordEquality(bb *ir.Block, left, right value.Value, recT
 			notEqNullBB := bb.Parent.NewBlock(fmt.Sprintf("rec_not_eq_null_val_%d_%d", id, i))
 			loadValBB := bb.Parent.NewBlock(fmt.Sprintf("rec_load_val_%d_%d", id, i))
 			bb.NewCondBr(bothNotNull, loadValBB, notEqNullBB)
-			notEqRecNullFinalBB := bb.Parent.NewBlock(fmt.Sprintf("rec_not_eq_null_final_%d", id))
-			notEqRecNullFinalBB.NewBr(notEqRecNullFinalBB.Parent.NewBlock(fmt.Sprintf("rec_not_eq_null_final_exit_%d", id)).NewRet(constant.NewBool(false)))
-			notEqNullBB.NewBr(notEqRecNullFinalBB)
+			notEqNullBB.NewBr(notEqRecFinalBB)
 			bb = loadValBB
 			leftField = bb.NewLoad(leftField.Type().(*types.PointerType).ElemType, leftField)
 			rightField = bb.NewLoad(rightField.Type().(*types.PointerType).ElemType, rightField)
@@ -1024,17 +1024,25 @@ func (cg *CodeGen) genRecordEquality(bb *ir.Block, left, right value.Value, recT
 			bb.NewCondBr(fieldEq, nextFieldBB, notEqFieldBB)
 			bb = nextFieldBB
 		} else {
-			bb.NewCondBr(fieldEq, bb.Parent.NewBlock(fmt.Sprintf("rec_eq_%d", id)), notEqFieldBB)
+			eqBB := bb.Parent.NewBlock(fmt.Sprintf("rec_eq_%d", id))
+			bb.NewCondBr(fieldEq, eqBB, notEqFieldBB)
 		}
-		notEqRecFieldFinalBB := bb.Parent.NewBlock(fmt.Sprintf("rec_not_eq_field_final_%d", id))
-		notEqRecFieldFinalBB.NewBr(notEqRecFieldFinalBB.Parent.NewBlock(fmt.Sprintf("rec_not_eq_field_final_exit_%d", id)).NewRet(constant.NewBool(false)))
-		notEqFieldBB.NewBr(notEqRecFieldFinalBB)
+		notEqFieldBB.NewBr(notEqRecFinalBB)
 	}
+	
+	// Create final blocks and phi node for result
+	finalRecEqBB := bb.Parent.NewBlock(fmt.Sprintf("rec_eq_final_%d", id))
+	notEqRecFinalBB.NewBr(finalRecEqBB)
+	
+	// Find the eqBB that was created in the last iteration
 	eqBB := bb.Parent.NewBlock(fmt.Sprintf("rec_eq_%d", id))
-	eqBB.NewBr(eqBB.Parent.NewBlock(fmt.Sprintf("rec_eq_exit_%d", id)).NewRet(constant.NewBool(true)))
-	finalEqBB := bb.Parent.NewBlock(fmt.Sprintf("list_eq_final_%d", id))
-	finalEqBB.NewRet(constant.NewBool(true))
-	return constant.NewBool(true) // Return value for control flow, actual result determined by branches
+	eqBB.NewBr(finalRecEqBB)
+	
+	result := finalRecEqBB.NewPhi(
+		ir.NewIncoming(constant.NewBool(false), notEqRecFinalBB),
+		ir.NewIncoming(constant.NewBool(true), eqBB),
+	)
+	return result
 }
 
 func (cg *CodeGen) genCompare(bb *ir.Block, left, right value.Value, pty parser.Type) value.Value {
