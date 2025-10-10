@@ -622,6 +622,12 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 				elemPtr := bb.NewGetElementPtr(elemTy, dataPtr, index)
 				elemPtr.InBounds = true
 				return bb.NewLoad(elemTy, elemPtr), bb
+			} else if calleeName == "len" {
+				listPtr, bb := cg.genExpr(bb, e.Args[0], vars)
+				structTy := listPtr.Type().(*types.PointerType).ElemType
+				lengthPtr := bb.NewGetElementPtr(structTy, listPtr, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
+				length := bb.NewLoad(types.I64, lengthPtr)
+				return length, bb
 			} else if vi, ok := vars[calleeName]; ok {
 				callee = bb.NewLoad(vi.Typ, vi.Alloc)
 			} else if f, ok := cg.functions[calleeName]; ok {

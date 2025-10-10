@@ -1164,6 +1164,20 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 					return lt.Element, nil
 				}
 				return nil, fmt.Errorf("elem called on non-list")
+			} else if ve.Name == "len" {
+				if len(e.Args) != 1 {
+					return nil, fmt.Errorf("len takes one argument")
+				}
+				argTy, err := tc.typeCheckExpr(e.Args[0], env)
+				if err != nil {
+					return nil, err
+				}
+				if _, ok := argTy.(ListType); ok {
+					// if lt, ok := argTy.(ListType); ok {
+					e.Type = BasicType("int")
+					return BasicType("int"), nil
+				}
+				return nil, fmt.Errorf("len called on non-list")
 			}
 		}
 		calleeTy, err := tc.typeCheckExpr(e.Callee, env)
