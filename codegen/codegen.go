@@ -223,6 +223,7 @@ func (cg *CodeGen) genPrint(bb *ir.Block, val value.Value, pty parser.Type, vars
 		loopIncBB := bb.Parent.NewBlock(fmt.Sprintf("list_loop_inc_%d", id))
 		afterBB := bb.Parent.NewBlock(fmt.Sprintf("list_after_%d", id))
 		bb.NewCondBr(isZero, zeroBB, loopCondBB)
+		zeroBB = cg.printString(zeroBB, "")
 		zeroBB.NewBr(afterBB)
 
 		i := loopCondBB.NewPhi(ir.NewIncoming(zero, bb))
@@ -591,14 +592,22 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 				pred = enum.IPredEQ
 			}
 			return bb.NewICmp(pred, left, right), bb
-		} else if e.Type == parser.BasicType("string") && e.Op == parser.TokenPlus {
-			leftLen := bb.NewCall(cg.strlen, left)
-			rightLen := bb.NewCall(cg.strlen, right)
-			totalLen := bb.NewAdd(leftLen, rightLen)
-			alloc := bb.NewCall(cg.malloc, bb.NewAdd(totalLen, constant.NewInt(types.I32, 1)))
-			bb.NewCall(cg.strcpy, alloc, left)
-			bb.NewCall(cg.strcat, alloc, right)
-			return alloc, bb
+		} else if e.Type == parser.BasicType("string") {
+			if e.Op == parser.TokenPlus {
+				leftLen := bb.NewCall(cg.strlen, left)
+				rightLen := bb.NewCall(cg.strlen, right)
+				totalLen := bb.NewAdd(leftLen, rightLen)
+				alloc := bb.NewCall(cg.malloc, bb.NewAdd(totalLen, constant.NewInt(types.I64, 1)))
+				bb.NewCall(cg.strcpy, alloc, left)
+				bb.NewCall(cg.strcat, alloc, right)
+				return alloc, bb
+			} else if e.Op == parser.TokenEQ {
+				strcmp := cg.module.NewFunc("strcmp", types.I32, ir.NewParam("", types.NewPointer(types.I8)), ir.NewParam("", types.NewPointer(types.I8)))
+				result := bb.NewCall(strcmp, left, right)
+				return bb.NewICmp(enum.IPredEQ, result, constant.NewInt(types.I32, 0)), bb
+			}
+		} else if lt, ok := e.Type.(parser.ListType); ok && e.Op == parser.TokenEQ {
+			return cg.genListEquality(bb, left, right, lt.Element), bb
 		} else {
 			panic("unsupported binary operation")
 			return nil, bb
@@ -629,6 +638,14 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 				lengthPtr := bb.NewGetElementPtr(structTy, listPtr, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
 				length := bb.NewLoad(types.I64, lengthPtr)
 				return length, bb
+			} else if calleeName == "compare" {
+				if len(e.Args) != 2 {
+					panic("compare takes two arguments")
+				}
+				left, bb := cg.genExpr(bb, e.Args[0], vars)
+				right, bb := cg.genExpr(bb, e.Args[1], vars)
+				pty := cg.getParserType(e.Args[0])
+				return cg.genCompare(bb, left, right, pty), bb
 			} else if vi, ok := vars[calleeName]; ok {
 				callee = bb.NewLoad(vi.Typ, vi.Alloc)
 			} else if f, ok := cg.functions[calleeName]; ok {
@@ -889,4 +906,153 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 		panic("unknown expression type")
 		return nil, bb
 	}
+	return nil, bb
+}
+
+func (cg *CodeGen) genListEquality(bb *ir.Block, left, right value.Value, elemType parser.Type) value.Value {
+	structType := left.Type().(*types.PointerType).ElemType
+	leftLengthPtr := bb.NewGetElementPtr(structType, left, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
+	leftLength := bb.NewLoad(types.I64, leftLengthPtr)
+	rightLengthPtr := bb.NewGetElementPtr(structType, right, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
+	rightLength := bb.NewLoad(types.I64, rightLengthPtr)
+	lengthEq := bb.NewICmp(enum.IPredEQ, leftLength, rightLength)
+	cg.listPrintCounter++
+	id := cg.listPrintCounter
+	notEqBB := bb.Parent.NewBlock(fmt.Sprintf("list_not_eq_%d", id))
+	checkElementsBB := bb.Parent.NewBlock(fmt.Sprintf("list_check_elements_%d", id))
+	bb.NewCondBr(lengthEq, checkElementsBB, notEqBB)
+	notEqListFinalBB := bb.Parent.NewBlock(fmt.Sprintf("list_not_eq_final_%d", id))
+	notEqListFinalBB.NewBr(notEqListFinalBB.Parent.NewBlock(fmt.Sprintf("list_not_eq_final_exit_%d", id)).NewRet(constant.NewBool(false)))
+	notEqBB.NewBr(notEqListFinalBB)
+	bb = checkElementsBB
+	zero := constant.NewInt(types.I64, 0)
+	isZero := bb.NewICmp(enum.IPredEQ, leftLength, zero)
+	zeroBB := bb.Parent.NewBlock(fmt.Sprintf("list_zero_eq_%d", id))
+	loopCondBB := bb.Parent.NewBlock(fmt.Sprintf("list_loop_cond_eq_%d", id))
+	loopBodyBB := bb.Parent.NewBlock(fmt.Sprintf("list_loop_body_eq_%d", id))
+	loopIncBB := bb.Parent.NewBlock(fmt.Sprintf("list_loop_inc_eq_%d", id))
+	eqBB := bb.Parent.NewBlock(fmt.Sprintf("list_eq_%d", id))
+	bb.NewCondBr(isZero, zeroBB, loopCondBB)
+	zeroBB.NewBr(zeroBB.Parent.NewBlock(fmt.Sprintf("list_zero_eq_exit_%d", id)).NewRet(constant.NewBool(true)))
+
+	i := loopCondBB.NewPhi(ir.NewIncoming(zero, checkElementsBB))
+	cmp := loopCondBB.NewICmp(enum.IPredSLT, i, leftLength)
+	loopCondBB.NewCondBr(cmp, loopBodyBB, eqBB)
+	eqBB.NewBr(finalEqBB)
+	leftDataPtrPtr := loopBodyBB.NewGetElementPtr(structType, left, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 1))
+	leftDataPtr := loopBodyBB.NewLoad(leftDataPtrPtr.Type().(*types.PointerType).ElemType, leftDataPtrPtr)
+	rightDataPtrPtr := loopBodyBB.NewGetElementPtr(structType, right, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 1))
+	rightDataPtr := loopBodyBB.NewLoad(rightDataPtrPtr.Type().(*types.PointerType).ElemType, rightDataPtrPtr)
+	elemTy := cg.toLLVMType(elemType)
+	leftElemPtr := loopBodyBB.NewGetElementPtr(elemTy, leftDataPtr, i)
+	leftElemPtr.InBounds = true
+	leftElem := loopBodyBB.NewLoad(elemTy, leftElemPtr)
+	rightElemPtr := loopBodyBB.NewGetElementPtr(elemTy, rightDataPtr, i)
+	rightElemPtr.InBounds = true
+	rightElem := loopBodyBB.NewLoad(elemTy, rightElemPtr)
+	var elemEq value.Value
+	if _, ok := elemType.(parser.BasicType); ok {
+		elemEq = loopBodyBB.NewICmp(enum.IPredEQ, leftElem, rightElem)
+	} else if nestedLt, ok := elemType.(parser.ListType); ok {
+		elemEq = cg.genListEquality(loopBodyBB, leftElem, rightElem, nestedLt.Element)
+	} else if nestedRt, ok := elemType.(parser.RecordType); ok {
+		elemEq = cg.genRecordEquality(loopBodyBB, leftElem, rightElem, nestedRt)
+	} else {
+		panic("unsupported type for list equality")
+	}
+	notEqElemBB := loopBodyBB.Parent.NewBlock(fmt.Sprintf("list_not_eq_elem_%d", id))
+	loopBodyBB.NewCondBr(elemEq, loopIncBB, notEqElemBB)
+	notEqListElemFinalBB := loopBodyBB.Parent.NewBlock(fmt.Sprintf("list_not_eq_elem_final_%d", id))
+	notEqListElemFinalBB.NewBr(notEqListElemFinalBB.Parent.NewBlock(fmt.Sprintf("list_not_eq_elem_final_exit_%d", id)).NewRet(constant.NewBool(false)))
+	notEqElemBB.NewBr(notEqListElemFinalBB)
+	incI := loopIncBB.NewAdd(i, constant.NewInt(types.I64, 1))
+	loopIncBB.NewBr(loopCondBB)
+	i.Incs = append(i.Incs, ir.NewIncoming(incI, loopIncBB))
+	finalEqBB := bb.Parent.NewBlock(fmt.Sprintf("list_eq_final_%d", id))
+	finalEqBB.NewRet(constant.NewBool(true))
+	return lengthEq // Return value for list length equality check, actual result determined by control flow
+}
+
+func (cg *CodeGen) genRecordEquality(bb *ir.Block, left, right value.Value, recType parser.RecordType) value.Value {
+	structType := left.Type().(*types.PointerType).ElemType
+	cg.recordPrintCounter++
+	id := cg.recordPrintCounter
+	for i, f := range recType.Fields {
+		leftFieldPtr := bb.NewGetElementPtr(structType, left, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, int64(i)))
+		leftFieldPtr.InBounds = true
+		leftField := bb.NewLoad(leftFieldPtr.Type().(*types.PointerType).ElemType, leftFieldPtr)
+		rightFieldPtr := bb.NewGetElementPtr(structType, right, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, int64(i)))
+		rightFieldPtr.InBounds = true
+		rightField := bb.NewLoad(rightFieldPtr.Type().(*types.PointerType).ElemType, rightFieldPtr)
+		var fieldEq value.Value
+		if f.Optional {
+			leftNull := bb.NewICmp(enum.IPredEQ, leftField, constant.NewNull(leftField.Type().(*types.PointerType)))
+			rightNull := bb.NewICmp(enum.IPredEQ, rightField, constant.NewNull(rightField.Type().(*types.PointerType)))
+			bothNull := bb.NewAnd(leftNull, rightNull)
+			notEqBB := bb.Parent.NewBlock(fmt.Sprintf("rec_not_eq_null_%d_%d", id, i))
+			checkValBB := bb.Parent.NewBlock(fmt.Sprintf("rec_check_val_%d_%d", id, i))
+			bb.NewCondBr(bothNull, checkValBB, notEqBB)
+			notEqRecFinalBB := bb.Parent.NewBlock(fmt.Sprintf("rec_not_eq_final_%d", id))
+			notEqRecFinalBB.NewBr(notEqRecFinalBB.Parent.NewBlock(fmt.Sprintf("rec_not_eq_final_exit_%d", id)).NewRet(constant.NewBool(false)))
+			notEqBB.NewBr(notEqRecFinalBB)
+			bb = checkValBB
+			leftNotNull := bb.NewICmp(enum.IPredNE, leftField, constant.NewNull(leftField.Type().(*types.PointerType)))
+			rightNotNull := bb.NewICmp(enum.IPredNE, rightField, constant.NewNull(rightField.Type().(*types.PointerType)))
+			bothNotNull := bb.NewAnd(leftNotNull, rightNotNull)
+			notEqNullBB := bb.Parent.NewBlock(fmt.Sprintf("rec_not_eq_null_val_%d_%d", id, i))
+			loadValBB := bb.Parent.NewBlock(fmt.Sprintf("rec_load_val_%d_%d", id, i))
+			bb.NewCondBr(bothNotNull, loadValBB, notEqNullBB)
+			notEqRecNullFinalBB := bb.Parent.NewBlock(fmt.Sprintf("rec_not_eq_null_final_%d", id))
+			notEqRecNullFinalBB.NewBr(notEqRecNullFinalBB.Parent.NewBlock(fmt.Sprintf("rec_not_eq_null_final_exit_%d", id)).NewRet(constant.NewBool(false)))
+			notEqNullBB.NewBr(notEqRecNullFinalBB)
+			bb = loadValBB
+			leftField = bb.NewLoad(leftField.Type().(*types.PointerType).ElemType, leftField)
+			rightField = bb.NewLoad(rightField.Type().(*types.PointerType).ElemType, rightField)
+		}
+		if _, ok := f.Ty.(parser.BasicType); ok {
+			fieldEq = bb.NewICmp(enum.IPredEQ, leftField, rightField)
+		} else if nestedLt, ok := f.Ty.(parser.ListType); ok {
+			fieldEq = cg.genListEquality(bb, leftField, rightField, nestedLt.Element)
+		} else if nestedRt, ok := f.Ty.(parser.RecordType); ok {
+			fieldEq = cg.genRecordEquality(bb, leftField, rightField, nestedRt)
+		} else {
+			panic("unsupported type for record equality")
+		}
+		notEqFieldBB := bb.Parent.NewBlock(fmt.Sprintf("rec_not_eq_field_%d_%d", id, i))
+		if i < len(recType.Fields)-1 {
+			nextFieldBB := bb.Parent.NewBlock(fmt.Sprintf("rec_next_field_%d_%d", id, i+1))
+			bb.NewCondBr(fieldEq, nextFieldBB, notEqFieldBB)
+			bb = nextFieldBB
+		} else {
+			bb.NewCondBr(fieldEq, bb.Parent.NewBlock(fmt.Sprintf("rec_eq_%d", id)), notEqFieldBB)
+		}
+		notEqRecFieldFinalBB := bb.Parent.NewBlock(fmt.Sprintf("rec_not_eq_field_final_%d", id))
+		notEqRecFieldFinalBB.NewBr(notEqRecFieldFinalBB.Parent.NewBlock(fmt.Sprintf("rec_not_eq_field_final_exit_%d", id)).NewRet(constant.NewBool(false)))
+		notEqFieldBB.NewBr(notEqRecFieldFinalBB)
+	}
+	eqBB := bb.Parent.NewBlock(fmt.Sprintf("rec_eq_%d", id))
+	eqBB.NewBr(eqBB.Parent.NewBlock(fmt.Sprintf("rec_eq_exit_%d", id)).NewRet(constant.NewBool(true)))
+	finalEqBB := bb.Parent.NewBlock(fmt.Sprintf("list_eq_final_%d", id))
+	finalEqBB.NewRet(constant.NewBool(true))
+	return constant.NewBool(true) // Return value for control flow, actual result determined by branches
+}
+
+func (cg *CodeGen) genCompare(bb *ir.Block, left, right value.Value, pty parser.Type) value.Value {
+	switch ty := pty.(type) {
+	case parser.BasicType:
+		switch string(ty) {
+		case "int", "bool":
+			return bb.NewICmp(enum.IPredEQ, left, right)
+		case "string":
+			strcmp := cg.module.NewFunc("strcmp", types.I32, ir.NewParam("", types.NewPointer(types.I8)), ir.NewParam("", types.NewPointer(types.I8)))
+			result := bb.NewCall(strcmp, left, right)
+			return bb.NewICmp(enum.IPredEQ, result, constant.NewInt(types.I32, 0))
+		}
+	case parser.ListType:
+		return cg.genListEquality(bb, left, right, ty.Element)
+	case parser.RecordType:
+		return cg.genRecordEquality(bb, left, right, ty)
+	}
+	panic("unsupported type for comparison")
+	return constant.NewBool(false)
 }
