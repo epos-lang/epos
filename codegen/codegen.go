@@ -980,6 +980,7 @@ func (cg *CodeGen) genRecordEquality(bb *ir.Block, left, right value.Value, recT
 	structType := left.Type().(*types.PointerType).ElemType
 	cg.recordPrintCounter++
 	id := cg.recordPrintCounter
+	notEqRecFinalBB := bb.Parent.NewBlock(fmt.Sprintf("rec_not_eq_final_%d", id))
 	for i, f := range recType.Fields {
 		leftFieldPtr := bb.NewGetElementPtr(structType, left, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, int64(i)))
 		leftFieldPtr.InBounds = true
@@ -994,7 +995,6 @@ func (cg *CodeGen) genRecordEquality(bb *ir.Block, left, right value.Value, recT
 			bothNull := bb.NewAnd(leftNull, rightNull)
 			notEqBB := bb.Parent.NewBlock(fmt.Sprintf("rec_not_eq_null_%d_%d", id, i))
 			checkValBB := bb.Parent.NewBlock(fmt.Sprintf("rec_check_val_%d_%d", id, i))
-			notEqRecFinalBB := bb.Parent.NewBlock(fmt.Sprintf("rec_not_eq_final_%d", id))
 			bb.NewCondBr(bothNull, checkValBB, notEqBB)
 			notEqBB.NewBr(notEqRecFinalBB)
 			bb = checkValBB
