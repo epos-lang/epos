@@ -32,7 +32,7 @@ person: person_type = @{
 - All types be Capital letter? (`Bool`, `List(String)`, `Int`)
 - Define types with a symbol $Person @Person???
 - Define public functions (or maybe private) with `*` placed in front of the function name (`fn *add(a, b: int): int`)
-- Function types (`fn higher_order_fn(caller_fn: fn(a: int, b: int) -> int): int`)
+- Function types (`fn higher_order_fn(caller_fn: (a: int, b: int) -> int): int`)
 - `string` type as `text` ?
 - `expr` for express (like print)?
 - Fancy case syntax (..)

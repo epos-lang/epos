@@ -14,19 +14,19 @@ import (
 
 // CodeGen struct
 type CodeGen struct {
-	module                         *ir.Module
-	vars                           map[string]varInfo
-	functions                      map[string]*ir.Func
-	printf                         *ir.Func
-	globalFmt                      *ir.Global
-	strFmt                         *ir.Global
-	ifCounter                      int
-	whileCounter                   int
-	matchCounter                   int
-	stringCounter                  int
-	listPrintCounter               int
-	recordPrintCounter             int
-	strlen, strcpy, strcat, malloc *ir.Func
+	module                                 *ir.Module
+	vars                                   map[string]varInfo
+	functions                              map[string]*ir.Func
+	printf                                 *ir.Func
+	globalFmt                              *ir.Global
+	strFmt                                 *ir.Global
+	ifCounter                              int
+	whileCounter                           int
+	matchCounter                           int
+	stringCounter                          int
+	listPrintCounter                       int
+	recordPrintCounter                     int
+	strlen, strcpy, strcat, malloc, memcpy *ir.Func
 }
 
 type varInfo struct {
@@ -124,8 +124,9 @@ func NewCodeGen() *CodeGen {
 	strcat := m.NewFunc("strcat", types.NewPointer(types.I8), ir.NewParam("", types.NewPointer(types.I8)), ir.NewParam("", types.NewPointer(types.I8)))
 
 	malloc := m.NewFunc("malloc", types.NewPointer(types.I8), ir.NewParam("", types.I64))
+	memcpy := m.NewFunc("llvm.memcpy.p0i8.p0i8.i64", types.Void, ir.NewParam("dst", types.NewPointer(types.I8)), ir.NewParam("src", types.NewPointer(types.I8)), ir.NewParam("len", types.I64), ir.NewParam("isvolatile", types.I1))
 
-	return &CodeGen{module: m, vars: make(map[string]varInfo), functions: make(map[string]*ir.Func), printf: printf, globalFmt: globalFmt, strFmt: strFmt, ifCounter: 0, whileCounter: 0, matchCounter: 0, stringCounter: 0, listPrintCounter: 0, recordPrintCounter: 0, strlen: strlen, strcpy: strcpy, strcat: strcat, malloc: malloc}
+	return &CodeGen{module: m, vars: make(map[string]varInfo), functions: make(map[string]*ir.Func), printf: printf, globalFmt: globalFmt, strFmt: strFmt, ifCounter: 0, whileCounter: 0, matchCounter: 0, stringCounter: 0, listPrintCounter: 0, recordPrintCounter: 0, strlen: strlen, strcpy: strcpy, strcat: strcat, malloc: malloc, memcpy: memcpy}
 }
 
 func (cg *CodeGen) getParserType(expr parser.Expr) parser.Type {
@@ -711,24 +712,69 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 		return load, postBB
 	case *parser.ListExpr:
 		elemTy := cg.toLLVMType(e.Type.(parser.ListType).Element)
-		if len(e.Elements) == 0 {
-			return constant.NewNull(cg.toLLVMType(e.Type).(*types.PointerType)), bb
+		cg.listPrintCounter++
+		id := cg.listPrintCounter
+		totalLengthAlloc := bb.NewAlloca(types.I64)
+		bb.NewStore(constant.NewInt(types.I64, 0), totalLengthAlloc)
+		currentBB := bb
+		for _, el := range e.Elements {
+			if se, ok := el.(*parser.SpreadExpr); ok {
+				spreadVal, newBB := cg.genExpr(currentBB, se.Expr, vars)
+				currentBB = newBB
+				spreadStructTy := spreadVal.Type().(*types.PointerType).ElemType
+				spreadLengthPtr := currentBB.NewGetElementPtr(spreadStructTy, spreadVal, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
+				spreadLength := currentBB.NewLoad(types.I64, spreadLengthPtr)
+				currentTotal := currentBB.NewLoad(types.I64, totalLengthAlloc)
+				newTotal := currentBB.NewAdd(currentTotal, spreadLength)
+				currentBB.NewStore(newTotal, totalLengthAlloc)
+			} else {
+				currentTotal := currentBB.NewLoad(types.I64, totalLengthAlloc)
+				newTotal := currentBB.NewAdd(currentTotal, constant.NewInt(types.I64, 1))
+				currentBB.NewStore(newTotal, totalLengthAlloc)
+			}
 		}
-		arrayTy := types.NewArray(uint64(len(e.Elements)), elemTy)
-		nullPtrArray := constant.NewNull(types.NewPointer(arrayTy))
-		sizePtrArray := bb.NewGetElementPtr(arrayTy, nullPtrArray, constant.NewInt(types.I64, 1))
-		sizePtrArray.InBounds = true
-		sizeArray := bb.NewPtrToInt(sizePtrArray, types.I64)
-		mallocedArray := bb.NewCall(cg.malloc, sizeArray)
-		arrayAlloc := bb.NewBitCast(mallocedArray, types.NewPointer(arrayTy))
-		for i, el := range e.Elements {
-			val, bb := cg.genExpr(bb, el, vars)
-			ptr := bb.NewGetElementPtr(arrayTy, arrayAlloc, constant.NewInt(types.I32, 0), constant.NewInt(types.I64, int64(i)))
-			ptr.InBounds = true
-			bb.NewStore(val, ptr)
+		totalLength := currentBB.NewLoad(types.I64, totalLengthAlloc)
+		isZeroAfter := currentBB.NewICmp(enum.IPredEQ, totalLength, constant.NewInt(types.I64, 0))
+		zeroBB := currentBB.Parent.NewBlock(fmt.Sprintf("list_zero_%d", id))
+		allocBB := currentBB.Parent.NewBlock(fmt.Sprintf("list_alloc_%d", id))
+		currentBB.NewCondBr(isZeroAfter, zeroBB, allocBB)
+		bb = allocBB
+		elemSizeTy := types.NewArray(1, elemTy)
+		nullPtrElem := constant.NewNull(types.NewPointer(elemSizeTy))
+		sizePtrElem := bb.NewGetElementPtr(elemSizeTy, nullPtrElem, constant.NewInt(types.I64, 1))
+		sizePtrElem.InBounds = true
+		elemSize := bb.NewPtrToInt(sizePtrElem, types.I64)
+		totalLengthInAlloc := bb.NewLoad(types.I64, totalLengthAlloc)
+		arraySize := bb.NewMul(totalLengthInAlloc, elemSize)
+		mallocedArray := bb.NewCall(cg.malloc, arraySize)
+		arrayAlloc := bb.NewBitCast(mallocedArray, types.NewPointer(elemTy))
+		currentPtrAlloc := bb.NewAlloca(types.NewPointer(elemTy))
+		bb.NewStore(arrayAlloc, currentPtrAlloc)
+		for _, el := range e.Elements {
+			if se, ok := el.(*parser.SpreadExpr); ok {
+				spreadVal, newBB := cg.genExpr(bb, se.Expr, vars)
+				bb = newBB
+				spreadStructTy := spreadVal.Type().(*types.PointerType).ElemType
+				spreadLengthPtr := bb.NewGetElementPtr(spreadStructTy, spreadVal, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
+				spreadLength := bb.NewLoad(types.I64, spreadLengthPtr)
+				spreadDataPtrPtr := bb.NewGetElementPtr(spreadStructTy, spreadVal, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 1))
+				spreadDataPtr := bb.NewLoad(types.NewPointer(elemTy), spreadDataPtrPtr)
+				spreadSize := bb.NewMul(spreadLength, elemSize)
+				currentPtrLoaded := bb.NewLoad(types.NewPointer(elemTy), currentPtrAlloc)
+				dst := bb.NewBitCast(currentPtrLoaded, types.NewPointer(types.I8))
+				src := bb.NewBitCast(spreadDataPtr, types.NewPointer(types.I8))
+				bb.NewCall(cg.memcpy, dst, src, spreadSize, constant.NewBool(false))
+				newCurrent := bb.NewGetElementPtr(elemTy, currentPtrLoaded, spreadLength)
+				bb.NewStore(newCurrent, currentPtrAlloc)
+			} else {
+				val, newBB := cg.genExpr(bb, el, vars)
+				bb = newBB
+				currentPtrLoaded := bb.NewLoad(types.NewPointer(elemTy), currentPtrAlloc)
+				bb.NewStore(val, currentPtrLoaded)
+				newCurrent := bb.NewGetElementPtr(elemTy, currentPtrLoaded, constant.NewInt(types.I64, 1))
+				bb.NewStore(newCurrent, currentPtrAlloc)
+			}
 		}
-		dataPtr := bb.NewGetElementPtr(arrayTy, arrayAlloc, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
-		dataPtr.InBounds = true
 		structTy := types.NewStruct(types.I64, types.NewPointer(elemTy))
 		nullPtrStruct := constant.NewNull(types.NewPointer(structTy))
 		sizePtrStruct := bb.NewGetElementPtr(structTy, nullPtrStruct, constant.NewInt(types.I64, 1))
@@ -737,10 +783,21 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 		mallocedStruct := bb.NewCall(cg.malloc, sizeStruct)
 		structAlloc := bb.NewBitCast(mallocedStruct, types.NewPointer(structTy))
 		lengthPtr := bb.NewGetElementPtr(structTy, structAlloc, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
-		bb.NewStore(constant.NewInt(types.I64, int64(len(e.Elements))), lengthPtr)
+		totalLengthFinal := bb.NewLoad(types.I64, totalLengthAlloc)
+		bb.NewStore(totalLengthFinal, lengthPtr)
 		dataFieldPtr := bb.NewGetElementPtr(structTy, structAlloc, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 1))
-		bb.NewStore(dataPtr, dataFieldPtr)
-		return structAlloc, bb
+		bb.NewStore(arrayAlloc, dataFieldPtr)
+		allocEndBB := bb
+		afterBB := bb.Parent.NewBlock(fmt.Sprintf("list_after_%d", id))
+		allocEndBB.NewBr(afterBB)
+		zeroBB.NewBr(afterBB)
+		bb = afterBB
+		nullList := constant.NewNull(types.NewPointer(structTy))
+		result := bb.NewPhi(ir.NewIncoming(nullList, zeroBB), ir.NewIncoming(structAlloc, allocEndBB))
+		return result, bb
+	case *parser.SpreadExpr:
+		val, bb := cg.genExpr(bb, e.Expr, vars)
+		return val, bb
 	case *parser.RecordExpr:
 		structTy := cg.toLLVMType(e.Type).(*types.PointerType).ElemType
 		nullPtr := constant.NewNull(types.NewPointer(structTy))

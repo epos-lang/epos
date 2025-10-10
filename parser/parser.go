@@ -55,6 +55,7 @@ const (
 	TokenFatArrow
 	TokenQuestion
 	TokenDot
+	TokenSpread
 )
 
 // Token struct
@@ -163,6 +164,11 @@ type StringExpr struct {
 type ListExpr struct {
 	Elements []Expr
 	Type     Type
+}
+
+type SpreadExpr struct {
+	Expr Expr
+	Type Type
 }
 
 type Type interface{}
@@ -301,7 +307,11 @@ func (l *Lexer) Lex() []Token {
 		case ch == '@':
 			l.addToken(TokenAt, "@")
 		case ch == '.':
-			l.addToken(TokenDot, ".")
+			if l.peekChar() == '.' {
+				l.addToken(TokenSpread, "..")
+			} else {
+				l.addToken(TokenDot, ".")
+			}
 		default:
 			panic(fmt.Sprintf("unexpected character: %c", ch))
 		}
@@ -701,10 +711,12 @@ func (p *Parser) parsePrimary() Expr {
 		p.pos++
 		var elements []Expr
 		if p.current().Type != TokenRBrace {
-			elements = append(elements, p.parseExpr())
+			elements = append(elements, p.parseListItem())
 			for p.current().Type == TokenComma {
 				p.pos++
-				elements = append(elements, p.parseExpr())
+				if p.current().Type != TokenRBrace {
+					elements = append(elements, p.parseListItem())
+				}
 			}
 		}
 		p.consume(TokenRBrace)
@@ -838,6 +850,14 @@ func (p *Parser) parseDot() Expr {
 		}
 	}
 	return expr
+}
+
+func (p *Parser) parseListItem() Expr {
+	if p.current().Type == TokenSpread {
+		p.pos++
+		return &SpreadExpr{Expr: p.parseExpr()}
+	}
+	return p.parseExpr()
 }
 
 func (p *Parser) parseRecordDecl() *AssignStmt {
@@ -1172,8 +1192,8 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 				if err != nil {
 					return nil, err
 				}
-				if _, ok := argTy.(ListType); ok {
-					// if lt, ok := argTy.(ListType); ok {
+				if lt, ok := argTy.(ListType); ok {
+					_ = lt // unused
 					e.Type = BasicType("int")
 					return BasicType("int"), nil
 				}
@@ -1213,14 +1233,24 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 			if err != nil {
 				return nil, err
 			}
-			if i == 0 {
-				elemTy = ty
+			var currentElemTy Type
+			if _, ok := elem.(*SpreadExpr); ok {
+				if lt, ok := ty.(ListType); ok {
+					currentElemTy = lt.Element
+				} else {
+					return nil, fmt.Errorf("spread on non-list")
+				}
 			} else {
-				if isPlaceholder(ty) {
+				currentElemTy = ty
+			}
+			if i == 0 {
+				elemTy = currentElemTy
+			} else {
+				if isPlaceholder(currentElemTy) {
 					// ok
 				} else if isPlaceholder(elemTy) {
-					elemTy = ty
-				} else if !tc.equalTypes(ty, elemTy) {
+					elemTy = currentElemTy
+				} else if !tc.equalTypes(currentElemTy, elemTy) {
 					return nil, fmt.Errorf("list elements have different types")
 				}
 			}
@@ -1228,6 +1258,17 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 		ty := ListType{Element: elemTy}
 		e.Type = ty
 		return ty, nil
+	case *SpreadExpr:
+		ty, err := tc.typeCheckExpr(e.Expr, env)
+		if err != nil {
+			return nil, err
+		}
+		ty = tc.resolveType(ty)
+		if lt, ok := ty.(ListType); ok {
+			e.Type = lt
+			return lt, nil
+		}
+		return nil, fmt.Errorf("spread operator on non-list type")
 	case *MatchExpr:
 		matchTy, err := tc.typeCheckExpr(e.Expr, env)
 		if err != nil {
@@ -1426,6 +1467,9 @@ func (tc *TypeChecker) compatible(a, b Type) bool {
 }
 
 func isPlaceholder(t Type) bool {
+	if t == nil {
+		return true
+	}
 	if lt, ok := t.(ListType); ok {
 		return lt.Element == nil
 	}
