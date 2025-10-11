@@ -1,0 +1,5 @@
+# Test list equality with ==
+
+a: list(int) = {1, 2}
+b: list(int) = {1, 2}
+print(a == b)

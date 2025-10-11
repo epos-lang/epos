@@ -1,0 +1,10 @@
+# Test record equality with ==
+
+record person_type
+  name: string
+end
+
+john1: person_type = @{name => "john"}
+john2: person_type = @{name => "john"}
+
+print(john1 == john2)

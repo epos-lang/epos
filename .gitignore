@@ -1,6 +1,7 @@
 result
 build
 
+AGENT.md
 opencode.nix
 package.json
 package-lock.json

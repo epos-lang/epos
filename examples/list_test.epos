@@ -1,0 +1,3 @@
+# Test list comparison only
+
+print(compare({1, 2}, {1, 2}))

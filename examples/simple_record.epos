@@ -1,0 +1,8 @@
+# Simple record test
+
+record person_type
+  name: string
+end
+
+john: person_type = @{name => "john"}
+print(john.name)

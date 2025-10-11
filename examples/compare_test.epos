@@ -1,0 +1,17 @@
+# Test compare function for different types
+
+# Test integers
+print(compare(1, 1))        # => true
+print(compare(1, 2))        # => false
+
+# Test booleans
+print(compare(true, true))  # => true
+print(compare(true, false)) # => false
+
+# Test strings
+print(compare("hello", "hello"))  # => true
+print(compare("hello", "world"))  # => false
+
+# Test lists
+print(compare({1, 2}, {1, 2}))    # => true
+print(compare({1, 2}, {1, 3}))    # => false

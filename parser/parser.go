@@ -1164,6 +1164,24 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 				}
 				e.Type = BasicType("int") // placeholder
 				return BasicType("int"), nil
+			} else if ve.Name == "compare" {
+				if len(e.Args) != 2 {
+					return nil, fmt.Errorf("compare takes two arguments")
+				}
+				arg1Type, err := tc.typeCheckExpr(e.Args[0], env)
+				if err != nil {
+					return nil, err
+				}
+				arg2Type, err := tc.typeCheckExpr(e.Args[1], env)
+				if err != nil {
+					return nil, err
+				}
+				// Both arguments must have the same type
+				if !tc.equalTypes(arg1Type, arg2Type) {
+					return nil, fmt.Errorf("compare requires both arguments to have the same type")
+				}
+				e.Type = BasicType("bool")
+				return BasicType("bool"), nil
 			} else if ve.Name == "elem" {
 				if len(e.Args) != 2 {
 					return nil, fmt.Errorf("elem takes two arguments")

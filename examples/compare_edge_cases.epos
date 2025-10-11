@@ -1,0 +1,11 @@
+# Test compare function edge cases
+
+# Empty lists
+print(compare({}, {}))
+
+# Different length lists  
+print(compare({1}, {1, 2}))
+
+# Nested lists
+print(compare({{1, 2}, {3, 4}}, {{1, 2}, {3, 4}}))
+print(compare({{1, 2}, {3, 4}}, {{1, 2}, {3, 5}}))

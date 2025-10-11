@@ -26,7 +26,7 @@ type CodeGen struct {
 	stringCounter                          int
 	listPrintCounter                       int
 	recordPrintCounter                     int
-	strlen, strcpy, strcat, malloc, memcpy *ir.Func
+	strlen, strcpy, strcat, malloc, memcpy, strcmp, memcmp *ir.Func
 }
 
 type varInfo struct {
@@ -125,8 +125,10 @@ func NewCodeGen() *CodeGen {
 
 	malloc := m.NewFunc("malloc", types.NewPointer(types.I8), ir.NewParam("", types.I64))
 	memcpy := m.NewFunc("llvm.memcpy.p0i8.p0i8.i64", types.Void, ir.NewParam("dst", types.NewPointer(types.I8)), ir.NewParam("src", types.NewPointer(types.I8)), ir.NewParam("len", types.I64), ir.NewParam("isvolatile", types.I1))
+	strcmp := m.NewFunc("strcmp", types.I32, ir.NewParam("", types.NewPointer(types.I8)), ir.NewParam("", types.NewPointer(types.I8)))
+	memcmp := m.NewFunc("memcmp", types.I32, ir.NewParam("", types.NewPointer(types.I8)), ir.NewParam("", types.NewPointer(types.I8)), ir.NewParam("", types.I64))
 
-	return &CodeGen{module: m, vars: make(map[string]varInfo), functions: make(map[string]*ir.Func), printf: printf, globalFmt: globalFmt, strFmt: strFmt, ifCounter: 0, whileCounter: 0, matchCounter: 0, stringCounter: 0, listPrintCounter: 0, recordPrintCounter: 0, strlen: strlen, strcpy: strcpy, strcat: strcat, malloc: malloc, memcpy: memcpy}
+	return &CodeGen{module: m, vars: make(map[string]varInfo), functions: make(map[string]*ir.Func), printf: printf, globalFmt: globalFmt, strFmt: strFmt, ifCounter: 0, whileCounter: 0, matchCounter: 0, stringCounter: 0, listPrintCounter: 0, recordPrintCounter: 0, strlen: strlen, strcpy: strcpy, strcat: strcat, malloc: malloc, memcpy: memcpy, strcmp: strcmp, memcmp: memcmp}
 }
 
 func (cg *CodeGen) getParserType(expr parser.Expr) parser.Type {
@@ -531,6 +533,8 @@ func (cg *CodeGen) genStmts(bb *ir.Block, stmts []parser.Stmt, vars map[string]v
 	return current
 }
 
+
+
 func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varInfo) (value.Value, *ir.Block) {
 	switch e := expr.(type) {
 	case *parser.NumberExpr:
@@ -607,7 +611,7 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 				return bb.NewICmp(enum.IPredEQ, result, constant.NewInt(types.I32, 0)), bb
 			}
 		} else if lt, ok := e.Type.(parser.ListType); ok && e.Op == parser.TokenEQ {
-			return cg.genListEquality(bb, left, right, lt.Element), bb
+			return cg.genListEquality(bb, left, right, lt.Element)
 		} else {
 			panic("unsupported binary operation")
 			return nil, bb
@@ -645,7 +649,16 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 				left, bb := cg.genExpr(bb, e.Args[0], vars)
 				right, bb := cg.genExpr(bb, e.Args[1], vars)
 				pty := cg.getParserType(e.Args[0])
-				return cg.genCompare(bb, left, right, pty), bb
+				
+				// Handle list and record comparison specially to avoid terminator issues
+				if listType, ok := pty.(parser.ListType); ok {
+					return cg.genListEquality(bb, left, right, listType.Element)
+				} else if recordType, ok := pty.(parser.RecordType); ok {
+					return cg.genRecordEquality(bb, left, right, recordType)
+				} else {
+					result := cg.genCompare(bb, left, right, pty)
+					return result, bb
+				}
 			} else if vi, ok := vars[calleeName]; ok {
 				callee = bb.NewLoad(vi.Typ, vi.Alloc)
 			} else if f, ok := cg.functions[calleeName]; ok {
@@ -909,7 +922,7 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 	return nil, bb
 }
 
-func (cg *CodeGen) genListEquality(bb *ir.Block, left, right value.Value, elemType parser.Type) value.Value {
+func (cg *CodeGen) genListEquality(bb *ir.Block, left, right value.Value, elemType parser.Type) (value.Value, *ir.Block) {
 	structType := left.Type().(*types.PointerType).ElemType
 	leftLengthPtr := bb.NewGetElementPtr(structType, left, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
 	leftLength := bb.NewLoad(types.I64, leftLengthPtr)
@@ -953,9 +966,9 @@ func (cg *CodeGen) genListEquality(bb *ir.Block, left, right value.Value, elemTy
 	if _, ok := elemType.(parser.BasicType); ok {
 		elemEq = loopBodyBB.NewICmp(enum.IPredEQ, leftElem, rightElem)
 	} else if nestedLt, ok := elemType.(parser.ListType); ok {
-		elemEq = cg.genListEquality(loopBodyBB, leftElem, rightElem, nestedLt.Element)
+		elemEq, loopBodyBB = cg.genListEquality(loopBodyBB, leftElem, rightElem, nestedLt.Element)
 	} else if nestedRt, ok := elemType.(parser.RecordType); ok {
-		elemEq = cg.genRecordEquality(loopBodyBB, leftElem, rightElem, nestedRt)
+		elemEq, loopBodyBB = cg.genRecordEquality(loopBodyBB, leftElem, rightElem, nestedRt)
 	} else {
 		panic("unsupported type for list equality")
 	}
@@ -973,14 +986,15 @@ func (cg *CodeGen) genListEquality(bb *ir.Block, left, right value.Value, elemTy
 		ir.NewIncoming(constant.NewBool(true), eqBB),
 		ir.NewIncoming(constant.NewBool(false), notEqElemBB),
 	)
-	return result
+	return result, finalEqBB
 }
 
-func (cg *CodeGen) genRecordEquality(bb *ir.Block, left, right value.Value, recType parser.RecordType) value.Value {
+func (cg *CodeGen) genRecordEquality(bb *ir.Block, left, right value.Value, recType parser.RecordType) (value.Value, *ir.Block) {
 	structType := left.Type().(*types.PointerType).ElemType
 	cg.recordPrintCounter++
 	id := cg.recordPrintCounter
 	notEqRecFinalBB := bb.Parent.NewBlock(fmt.Sprintf("rec_not_eq_final_%d", id))
+	var lastEqBB *ir.Block
 	for i, f := range recType.Fields {
 		leftFieldPtr := bb.NewGetElementPtr(structType, left, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, int64(i)))
 		leftFieldPtr.InBounds = true
@@ -1012,9 +1026,9 @@ func (cg *CodeGen) genRecordEquality(bb *ir.Block, left, right value.Value, recT
 		if _, ok := f.Ty.(parser.BasicType); ok {
 			fieldEq = bb.NewICmp(enum.IPredEQ, leftField, rightField)
 		} else if nestedLt, ok := f.Ty.(parser.ListType); ok {
-			fieldEq = cg.genListEquality(bb, leftField, rightField, nestedLt.Element)
+			fieldEq, bb = cg.genListEquality(bb, leftField, rightField, nestedLt.Element)
 		} else if nestedRt, ok := f.Ty.(parser.RecordType); ok {
-			fieldEq = cg.genRecordEquality(bb, leftField, rightField, nestedRt)
+			fieldEq, bb = cg.genRecordEquality(bb, leftField, rightField, nestedRt)
 		} else {
 			panic("unsupported type for record equality")
 		}
@@ -1024,8 +1038,8 @@ func (cg *CodeGen) genRecordEquality(bb *ir.Block, left, right value.Value, recT
 			bb.NewCondBr(fieldEq, nextFieldBB, notEqFieldBB)
 			bb = nextFieldBB
 		} else {
-			eqBB := bb.Parent.NewBlock(fmt.Sprintf("rec_eq_%d", id))
-			bb.NewCondBr(fieldEq, eqBB, notEqFieldBB)
+			lastEqBB = bb.Parent.NewBlock(fmt.Sprintf("rec_eq_%d", id))
+			bb.NewCondBr(fieldEq, lastEqBB, notEqFieldBB)
 		}
 		notEqFieldBB.NewBr(notEqRecFinalBB)
 	}
@@ -1034,15 +1048,16 @@ func (cg *CodeGen) genRecordEquality(bb *ir.Block, left, right value.Value, recT
 	finalRecEqBB := bb.Parent.NewBlock(fmt.Sprintf("rec_eq_final_%d", id))
 	notEqRecFinalBB.NewBr(finalRecEqBB)
 	
-	// Find the eqBB that was created in the last iteration
-	eqBB := bb.Parent.NewBlock(fmt.Sprintf("rec_eq_%d", id))
-	eqBB.NewBr(finalRecEqBB)
+	// Add terminator to the eqBB that was created in the last iteration
+	if lastEqBB != nil {
+		lastEqBB.NewBr(finalRecEqBB)
+	}
 	
 	result := finalRecEqBB.NewPhi(
 		ir.NewIncoming(constant.NewBool(false), notEqRecFinalBB),
-		ir.NewIncoming(constant.NewBool(true), eqBB),
+		ir.NewIncoming(constant.NewBool(true), lastEqBB),
 	)
-	return result
+	return result, finalRecEqBB
 }
 
 func (cg *CodeGen) genCompare(bb *ir.Block, left, right value.Value, pty parser.Type) value.Value {
@@ -1052,14 +1067,15 @@ func (cg *CodeGen) genCompare(bb *ir.Block, left, right value.Value, pty parser.
 		case "int", "bool":
 			return bb.NewICmp(enum.IPredEQ, left, right)
 		case "string":
-			strcmp := cg.module.NewFunc("strcmp", types.I32, ir.NewParam("", types.NewPointer(types.I8)), ir.NewParam("", types.NewPointer(types.I8)))
-			result := bb.NewCall(strcmp, left, right)
+			result := bb.NewCall(cg.strcmp, left, right)
 			return bb.NewICmp(enum.IPredEQ, result, constant.NewInt(types.I32, 0))
 		}
 	case parser.ListType:
-		return cg.genListEquality(bb, left, right, ty.Element)
+		// This should not be called for compare function, handled separately
+		panic("list comparison should be handled in compare function call")
 	case parser.RecordType:
-		return cg.genRecordEquality(bb, left, right, ty)
+		// This should not be called for compare function, handled separately
+		panic("record comparison should be handled in compare function call")
 	}
 	panic("unsupported type for comparison")
 	return constant.NewBool(false)

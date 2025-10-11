@@ -1,0 +1,7 @@
+# Test compare function additional cases
+
+# Different length lists  
+print(compare({1}, {1, 2}))
+
+# Same values, different order
+print(compare({1, 2}, {2, 1}))

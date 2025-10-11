@@ -1,0 +1,12 @@
+# Test compare function with records - simple example
+
+record person_type
+  name: string
+end
+
+john1: person_type = @{name => "john"}
+john2: person_type = @{name => "john"}
+eric: person_type = @{name => "eric"}
+
+print(compare(john1, john2))  # should be true
+print(compare(john1, eric))   # should be false
