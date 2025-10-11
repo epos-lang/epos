@@ -199,11 +199,7 @@ func (cg *CodeGen) substituteGenericTypesInStmt(stmt parser.Stmt, typeMap map[st
 	switch s := stmt.(type) {
 	case *parser.ExprStmt:
 		return &parser.ExprStmt{Expr: cg.substituteGenericTypesInExpr(s.Expr, typeMap)}
-	case *parser.ReturnStmt:
-		return &parser.ReturnStmt{
-			Expr: cg.substituteGenericTypesInExpr(s.Expr, typeMap),
-			Type: cg.substituteGenericType(s.Type, typeMap),
-		}
+
 	case *parser.AssignStmt:
 		return &parser.AssignStmt{
 			Var:      s.Var,
@@ -358,8 +354,6 @@ func (cg *CodeGen) getParserType(expr parser.Expr) parser.Type {
 		return e.Type
 	case *parser.FieldAccessExpr:
 		return e.Type
-	case *parser.TypeValueExpr:
-		return parser.BasicType("type")
 	default:
 		panic("unknown expr type for getParserType")
 	}
@@ -620,6 +614,16 @@ func (cg *CodeGen) genFunctionBody(s *parser.FunctionStmt) {
 		if rt.Equal(types.Void) {
 			current.NewRet(nil)
 		} else {
+			// Handle implicit return from last expression
+			if len(s.Body) > 0 {
+				if lastExprStmt, ok := s.Body[len(s.Body)-1].(*parser.ExprStmt); ok {
+					// Generate the last expression and return its value
+					retVal, retBB := cg.genExpr(current, lastExprStmt.Expr, localVars)
+					retBB.NewRet(retVal)
+					return
+				}
+			}
+			// Fallback to zero value if no expression to return
 			var zeroVal value.Value
 			switch typ := rt.(type) {
 			case *types.IntType:
@@ -640,91 +644,25 @@ func (cg *CodeGen) genStmt(bb *ir.Block, stmt parser.Stmt, vars map[string]varIn
 		// For now, imports are handled at parse time
 		// In a full implementation, we would link imported modules
 		return bb
+	case *parser.TypeAliasStmt:
+		// Type aliases are compile-time constructs, no runtime code needed
+		return bb
 	case *parser.AssignStmt:
 		// Updated for typed variables
 		val, bb := cg.genExpr(bb, s.Expr, vars)
 		typ := cg.toLLVMType(s.Type)
 		var alloc *ir.InstAlloca
-		if existing, ok := vars[s.Var]; ok {
-			if !existing.Typ.Equal(typ) {
-				panic("type mismatch in assignment")
-			}
-			alloc = existing.Alloc
-		} else {
-			alloc = bb.NewAlloca(typ)
-			vars[s.Var] = varInfo{Alloc: alloc, Typ: typ}
+		if _, ok := vars[s.Var]; ok {
+			panic(fmt.Sprintf("variable %s already defined (variables are immutable)", s.Var))
 		}
+		alloc = bb.NewAlloca(typ)
+		vars[s.Var] = varInfo{Alloc: alloc, Typ: typ}
 		bb.NewStore(val, alloc)
 		return bb
 
-	case *parser.ReturnStmt:
-		val, bb := cg.genExpr(bb, s.Expr, vars)
-		bb.NewRet(val)
-		return bb
 	case *parser.ExprStmt:
 		_, bb = cg.genExpr(bb, s.Expr, vars) // Generate but ignore result
 		return bb
-	case *parser.IfStmt:
-		cg.ifCounter++
-		id := cg.ifCounter
-		condVal, bb := cg.genExpr(bb, s.Cond, vars)
-		condTyp := condVal.Type()
-		var cond value.Value
-		if condTyp.Equal(types.I1) {
-			cond = condVal
-		} else if condTyp.Equal(types.I64) {
-			zero := constant.NewInt(types.I64, 0)
-			cond = bb.NewICmp(enum.IPredNE, condVal, zero)
-		} else {
-			panic("invalid condition type")
-		}
-
-		thenBB := bb.Parent.NewBlock(fmt.Sprintf("if_then_%d", id))
-		elseBB := bb.Parent.NewBlock(fmt.Sprintf("if_else_%d", id))
-		mergeBB := bb.Parent.NewBlock(fmt.Sprintf("if_merge_%d", id))
-
-		bb.NewCondBr(cond, thenBB, elseBB)
-
-		thenEnd := cg.genStmts(thenBB, s.Then, vars)
-		if thenEnd.Term == nil {
-			thenEnd.NewBr(mergeBB)
-		}
-
-		elseEnd := cg.genStmts(elseBB, s.Else, vars)
-		if elseEnd.Term == nil {
-			elseEnd.NewBr(mergeBB)
-		}
-
-		return mergeBB
-	case *parser.WhileStmt:
-		cg.whileCounter++
-		id := cg.whileCounter
-		condBB := bb.Parent.NewBlock(fmt.Sprintf("while_cond_%d", id))
-		bodyBB := bb.Parent.NewBlock(fmt.Sprintf("while_body_%d", id))
-		exitBB := bb.Parent.NewBlock(fmt.Sprintf("while_exit_%d", id))
-
-		bb.NewBr(condBB)
-
-		condVal, condBB := cg.genExpr(condBB, s.Cond, vars)
-		condTyp := condVal.Type()
-		var cond value.Value
-		if condTyp.Equal(types.I1) {
-			cond = condVal
-		} else if condTyp.Equal(types.Double) {
-			zero := constant.NewFloat(types.Double, 0)
-			cond = condBB.NewFCmp(enum.FPredONE, condVal, zero)
-		} else {
-			panic("invalid condition type")
-		}
-
-		condBB.NewCondBr(cond, bodyBB, exitBB)
-
-		bodyEnd := cg.genStmts(bodyBB, s.Body, vars)
-		if bodyEnd.Term == nil {
-			bodyEnd.NewBr(condBB)
-		}
-
-		return exitBB
 	case *parser.MatchStmt:
 		cg.matchCounter++
 		id := cg.matchCounter
@@ -1257,16 +1195,6 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 			return phi, mergeBB
 		}
 		return val, bb
-	case *parser.TypeValueExpr:
-		str := typeToString(e.Ty)
-		strConst := constant.NewCharArrayFromString(str + "\x00")
-		cg.stringCounter++
-		name := fmt.Sprintf("type_str_%d", cg.stringCounter)
-		globalStr := cg.module.NewGlobalDef(name, strConst)
-		elemType := globalStr.Type().(*types.PointerType).ElemType
-		ptr := bb.NewGetElementPtr(elemType, globalStr, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
-		ptr.InBounds = true
-		return ptr, bb
 	default:
 		panic("unknown expression type")
 		return nil, bb

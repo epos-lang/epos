@@ -26,18 +26,13 @@ const (
 	TokenRParen
 	TokenFunction
 	TokenEnd
-	TokenReturn
 	TokenComma
-	TokenIf
-	TokenThen
-	TokenElse
 	TokenGT
 	TokenLT
 	TokenEQ
-	TokenWhile
-	TokenDo
 	TokenString
 	TokenMatch
+	TokenThen
 	TokenDefault
 	TokenArrow
 	TokenTrue
@@ -63,6 +58,7 @@ const (
 	TokenFrom
 	TokenAsterisk
 	TokenMul
+	TokenTypeKeyword
 )
 
 // Token struct
@@ -120,21 +116,7 @@ type CallExpr struct {
 	Type   Type
 }
 
-type ReturnStmt struct {
-	Expr Expr
-	Type Type
-}
 
-type IfStmt struct {
-	Cond Expr
-	Then []Stmt
-	Else []Stmt
-}
-
-type WhileStmt struct {
-	Cond Expr
-	Body []Stmt
-}
 
 type MatchCase struct {
 	Values []Expr
@@ -232,9 +214,9 @@ type FieldAccessExpr struct {
 	Type     Type
 }
 
-type TypeValueExpr struct {
+type TypeAliasStmt struct {
+	Name string
 	Ty   Type
-	Type Type
 }
 
 type RecordDecl struct {
@@ -565,20 +547,11 @@ func (l *Lexer) lexIdentifier() {
 		l.tokens = append(l.tokens, Token{Type: TokenFunction, Value: id})
 	} else if id == "end" {
 		l.tokens = append(l.tokens, Token{Type: TokenEnd, Value: id})
-	} else if id == "return" {
-		l.tokens = append(l.tokens, Token{Type: TokenReturn, Value: id})
-	} else if id == "if" {
-		l.tokens = append(l.tokens, Token{Type: TokenIf, Value: id})
-	} else if id == "then" {
-		l.tokens = append(l.tokens, Token{Type: TokenThen, Value: id})
-	} else if id == "else" {
-		l.tokens = append(l.tokens, Token{Type: TokenElse, Value: id})
-	} else if id == "while" {
-		l.tokens = append(l.tokens, Token{Type: TokenWhile, Value: id})
-	} else if id == "do" {
-		l.tokens = append(l.tokens, Token{Type: TokenDo, Value: id})
+
 	} else if id == "match" {
 		l.tokens = append(l.tokens, Token{Type: TokenMatch, Value: id})
+	} else if id == "then" {
+		l.tokens = append(l.tokens, Token{Type: TokenThen, Value: id})
 	} else if id == "true" {
 		l.tokens = append(l.tokens, Token{Type: TokenTrue, Value: id})
 	} else if id == "false" {
@@ -591,6 +564,8 @@ func (l *Lexer) lexIdentifier() {
 		l.tokens = append(l.tokens, Token{Type: TokenImport, Value: id})
 	} else if id == "from" {
 		l.tokens = append(l.tokens, Token{Type: TokenFrom, Value: id})
+	} else if id == "type" {
+		l.tokens = append(l.tokens, Token{Type: TokenTypeKeyword, Value: id})
 	} else {
 		l.tokens = append(l.tokens, Token{Type: TokenIdentifier, Value: id})
 	}
@@ -618,16 +593,12 @@ func (p *Parser) parseStmt() Stmt {
 	tok := p.current()
 	if tok.Type == TokenImport {
 		return p.parseImport()
+	} else if tok.Type == TokenTypeKeyword {
+		return p.parseTypeAlias()
 	} else if tok.Type == TokenIdentifier && (p.peek().Type == TokenAssign || p.peek().Type == TokenColon) {
 		return p.parseAssign()
 	} else if tok.Type == TokenFunction {
 		return p.parseFunction()
-	} else if tok.Type == TokenReturn {
-		return p.parseReturn()
-	} else if tok.Type == TokenIf {
-		return p.parseIf()
-	} else if tok.Type == TokenWhile {
-		return p.parseWhile()
 	} else if tok.Type == TokenMatch {
 		return p.parseMatch()
 	} else if tok.Type == TokenRecord {
@@ -647,17 +618,16 @@ func (p *Parser) parseAssign() *AssignStmt {
 		declType = p.parseType()
 	}
 	p.consume(TokenAssign)
-	var expr Expr
-	if declType != nil {
-		if bt, ok := declType.(BasicType); ok && string(bt) == "type" {
-			expr = &TypeValueExpr{Ty: p.parseType()}
-		} else {
-			expr = p.parseExpr()
-		}
-	} else {
-		expr = p.parseExpr()
-	}
+	expr := p.parseExpr()
 	return &AssignStmt{Var: varName, DeclType: declType, Expr: expr}
+}
+
+func (p *Parser) parseTypeAlias() *TypeAliasStmt {
+	p.consume(TokenTypeKeyword)
+	name := p.consume(TokenIdentifier).Value
+	p.consume(TokenAssign)
+	ty := p.parseType()
+	return &TypeAliasStmt{Name: name, Ty: ty}
 }
 
 func (p *Parser) parseImport() *ImportStmt {
@@ -733,32 +703,8 @@ func (p *Parser) parseFunction() *FunctionStmt {
 		body = append(body, p.parseStmt())
 	}
 	p.consume(TokenEnd)
-	if len(body) > 0 && returnType != nil {
-		lastStmt := body[len(body)-1]
-		if exprStmt, ok := lastStmt.(*ExprStmt); ok {
-			body[len(body)-1] = &ReturnStmt{Expr: exprStmt.Expr}
-		} else if matchStmt, ok := lastStmt.(*MatchStmt); ok {
-			// Convert MatchStmt to MatchExpr wrapped in ReturnStmt
-			var matchCases []MatchCaseExpr
-			for _, c := range matchStmt.Cases {
-				if exprStmt, ok := c.Body.(*ExprStmt); ok {
-					matchCases = append(matchCases, MatchCaseExpr{Values: c.Values, Body: exprStmt.Expr})
-				} else {
-					panic("match case body must be an expression for implicit return")
-				}
-			}
-			var defaultExpr Expr
-			if matchStmt.Default != nil {
-				if exprStmt, ok := matchStmt.Default.(*ExprStmt); ok {
-					defaultExpr = exprStmt.Expr
-				} else {
-					panic("match default body must be an expression for implicit return")
-				}
-			}
-			matchExpr := &MatchExpr{Expr: matchStmt.Expr, Cases: matchCases, Default: defaultExpr}
-			body[len(body)-1] = &ReturnStmt{Expr: matchExpr}
-		}
-	}
+	// With implicit returns, the last statement should remain as is
+	// The codegen will handle generating returns from the last expression
 	return &FunctionStmt{Name: name, Params: params, ReturnType: returnType, Body: body, IsPublic: isPublic}
 }
 
@@ -790,42 +736,7 @@ func (p *Parser) parseMatch() *MatchStmt {
 	return &MatchStmt{Expr: expr, Cases: cases, Default: defaultStmt}
 }
 
-func (p *Parser) parseWhile() *WhileStmt {
-	p.consume(TokenWhile)
-	cond := p.parseExpr()
-	p.consume(TokenDo)
-	var body []Stmt
-	for p.current().Type != TokenEnd {
-		body = append(body, p.parseStmt())
-	}
-	p.consume(TokenEnd)
-	return &WhileStmt{Cond: cond, Body: body}
-}
 
-func (p *Parser) parseIf() *IfStmt {
-	p.consume(TokenIf)
-	cond := p.parseExpr()
-	p.consume(TokenThen)
-	var thenBody []Stmt
-	for p.current().Type != TokenElse && p.current().Type != TokenEnd {
-		thenBody = append(thenBody, p.parseStmt())
-	}
-	var elseBody []Stmt
-	if p.current().Type == TokenElse {
-		p.consume(TokenElse)
-		for p.current().Type != TokenEnd {
-			elseBody = append(elseBody, p.parseStmt())
-		}
-	}
-	p.consume(TokenEnd)
-	return &IfStmt{Cond: cond, Then: thenBody, Else: elseBody}
-}
-
-func (p *Parser) parseReturn() *ReturnStmt {
-	p.consume(TokenReturn)
-	expr := p.parseExpr()
-	return &ReturnStmt{Expr: expr}
-}
 
 func (p *Parser) parseAssert() *AssertStmt {
 	p.consume(TokenAssert)
@@ -1121,7 +1032,7 @@ func (p *Parser) parseListItem() Expr {
 	return p.parseExpr()
 }
 
-func (p *Parser) parseRecordDecl() *AssignStmt {
+func (p *Parser) parseRecordDecl() *TypeAliasStmt {
 	p.consume(TokenRecord)
 	name := p.consume(TokenIdentifier).Value
 	var fields []Field
@@ -1138,8 +1049,7 @@ func (p *Parser) parseRecordDecl() *AssignStmt {
 	}
 	p.consume(TokenEnd)
 	ty := RecordType{Fields: fields}
-	expr := &TypeValueExpr{Ty: ty}
-	return &AssignStmt{Var: name, DeclType: BasicType("type"), Expr: expr}
+	return &TypeAliasStmt{Name: name, Ty: ty}
 }
 
 type TypeChecker struct {
@@ -1273,6 +1183,9 @@ func (tc *TypeChecker) typeCheckStmt(stmt Stmt, env map[string]Type) error {
 	switch s := stmt.(type) {
 	case *ImportStmt:
 		return tc.processImport(s, env)
+	case *TypeAliasStmt:
+		tc.namedTypes[s.Name] = tc.resolveType(s.Ty)
+		return nil
 	case *FunctionStmt:
 		localEnv := make(map[string]Type)
 		for k, v := range env {
@@ -1288,26 +1201,20 @@ func (tc *TypeChecker) typeCheckStmt(stmt Stmt, env map[string]Type) error {
 				return err
 			}
 		}
-		// Check return type
-		if len(s.Body) > 0 {
-			if ret, ok := s.Body[len(s.Body)-1].(*ReturnStmt); ok {
-				retTy, err := tc.typeCheckExpr(ret.Expr, localEnv)
+		// Check implicit return type from last statement
+		if len(s.Body) > 0 && s.ReturnType != nil {
+			lastStmt := s.Body[len(s.Body)-1]
+			if exprStmt, ok := lastStmt.(*ExprStmt); ok {
+				retTy, err := tc.typeCheckExpr(exprStmt.Expr, localEnv)
 				if err != nil {
 					return err
 				}
 				retTy = tc.resolveType(retTy)
-				if s.ReturnType != nil {
-					if !tc.compatible(retTy, s.ReturnType) {
-						return fmt.Errorf("return type mismatch: expected %v, got %v", s.ReturnType, retTy)
-					}
-					resolveTypes(ret.Expr, s.ReturnType)
-					ret.Type = s.ReturnType
-				} else {
-					if isUnresolvedPlaceholder(retTy) {
-						return fmt.Errorf("cannot infer return type for empty list without specified return type")
-					}
-					ret.Type = retTy
+				if !tc.compatible(retTy, s.ReturnType) {
+					return fmt.Errorf("implicit return type mismatch: expected %v, got %v", s.ReturnType, retTy)
 				}
+				resolveTypes(exprStmt.Expr, s.ReturnType)
+				exprStmt.Type = s.ReturnType
 			}
 		}
 		return nil
@@ -1324,33 +1231,13 @@ func (tc *TypeChecker) typeCheckStmt(stmt Stmt, env map[string]Type) error {
 			}
 			resolveTypes(s.Expr, declType)
 			ty = declType
-			if BasicType("type") == declType {
-				if tve, ok := s.Expr.(*TypeValueExpr); ok {
-					if rt, ok := tve.Ty.(RecordType); ok {
-						tc.namedTypes[s.Var] = rt
-					}
-				}
-			}
 		} else if isUnresolvedPlaceholder(ty) {
 			return fmt.Errorf("cannot infer type for empty list without declaration")
 		}
-		if existing, ok := env[s.Var]; ok {
-			if !tc.equalTypes(existing, ty) {
-				return fmt.Errorf("reassignment type mismatch: expected %v, got %v", existing, ty)
-			}
-			if s.DeclType != nil {
-				return fmt.Errorf("cannot specify type on reassignment")
-			}
-		} else {
-			env[s.Var] = ty
+		if _, ok := env[s.Var]; ok {
+			return fmt.Errorf("variable %s already defined (variables are immutable)", s.Var)
 		}
-		s.Type = ty
-		return nil
-	case *ReturnStmt:
-		ty, err := tc.typeCheckExpr(s.Expr, env)
-		if err != nil {
-			return err
-		}
+		env[s.Var] = ty
 		s.Type = ty
 		return nil
 	case *ExprStmt:
@@ -1359,33 +1246,6 @@ func (tc *TypeChecker) typeCheckStmt(stmt Stmt, env map[string]Type) error {
 			return err
 		}
 		s.Type = ty
-		return nil
-	case *IfStmt:
-		_, err := tc.typeCheckExpr(s.Cond, env)
-		if err != nil {
-			return err
-		}
-		for _, st := range s.Then {
-			if err := tc.typeCheckStmt(st, env); err != nil {
-				return err
-			}
-		}
-		for _, st := range s.Else {
-			if err := tc.typeCheckStmt(st, env); err != nil {
-				return err
-			}
-		}
-		return nil
-	case *WhileStmt:
-		_, err := tc.typeCheckExpr(s.Cond, env)
-		if err != nil {
-			return err
-		}
-		for _, st := range s.Body {
-			if err := tc.typeCheckStmt(st, env); err != nil {
-				return err
-			}
-		}
 		return nil
 	case *MatchStmt:
 		matchTy, err := tc.typeCheckExpr(s.Expr, env)
@@ -1751,9 +1611,6 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 			}
 		}
 		return nil, fmt.Errorf("field %s not found in record", e.Field)
-	case *TypeValueExpr:
-		e.Type = BasicType("type")
-		return BasicType("type"), nil
 	default:
 		return nil, fmt.Errorf("unsupported expression type")
 	}

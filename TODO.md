@@ -7,7 +7,6 @@
 - [x] Make sure you can make lists of lists
 - [x] Fix multiline comments
 - [x] Add records
-- [x] Add `type` type (example: `list_of_bool_type: type = list(bool)`)
 - [x] Add function type (example: `add_type: type = fn(int, int) -> int`)
 - [x] Add `len` function to get length of lists (`len({1, 2, 3}) # => 2`)
 - [x] Add list spread operator (`{1, ..{2, 3}}` or `{..{1, 2}, 3}`)
@@ -18,11 +17,10 @@
 - [x] Add `assert` keyword (example: `assert a + b == 3`)
 - [x] Add generics
 - [x] Add `import` (examples: `import "./other-file.epos"`, `import {function, function2} from "./local-module"`)
-- [!] Remove `type` type and make `type` a keyword (example: `type new_type = int`)
-- [??] Change `fn(int) -> int` type to `(int) -> int`
+- [x] Make `type` a keyword (example: `type new_type = int`)
+- [x] Remove `if`/`while`/`return` statements
+- [x] Make variables immutable
 - [ ] Array first/last pattern matching (`{first, ..last}`
-- [ ] Add piping operator (`|>`)
-- [ ] Remove `if`/`while`/`return` statements
-- [ ] Make variables immutable
+- [.] Add piping operator (`|>`)
 - [ ] Add ranges (example: `{1..5} #=> {1, 2, 3, 4, 5}`)
 - [ ] Add `_` as a discard variable name (example: `_: int = 1 #=> _ is discarded` or `_list_of_nums: list(int) = {1, 2}`)
