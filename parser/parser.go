@@ -527,8 +527,29 @@ func (p *Parser) parseFunction() *FunctionStmt {
 	}
 	p.consume(TokenEnd)
 	if len(body) > 0 && returnType != nil {
-		if exprStmt, ok := body[len(body)-1].(*ExprStmt); ok {
+		lastStmt := body[len(body)-1]
+		if exprStmt, ok := lastStmt.(*ExprStmt); ok {
 			body[len(body)-1] = &ReturnStmt{Expr: exprStmt.Expr}
+		} else if matchStmt, ok := lastStmt.(*MatchStmt); ok {
+			// Convert MatchStmt to MatchExpr wrapped in ReturnStmt
+			var matchCases []MatchCaseExpr
+			for _, c := range matchStmt.Cases {
+				if exprStmt, ok := c.Body.(*ExprStmt); ok {
+					matchCases = append(matchCases, MatchCaseExpr{Values: c.Values, Body: exprStmt.Expr})
+				} else {
+					panic("match case body must be an expression for implicit return")
+				}
+			}
+			var defaultExpr Expr
+			if matchStmt.Default != nil {
+				if exprStmt, ok := matchStmt.Default.(*ExprStmt); ok {
+					defaultExpr = exprStmt.Expr
+				} else {
+					panic("match default body must be an expression for implicit return")
+				}
+			}
+			matchExpr := &MatchExpr{Expr: matchStmt.Expr, Cases: matchCases, Default: defaultExpr}
+			body[len(body)-1] = &ReturnStmt{Expr: matchExpr}
 		}
 	}
 	return &FunctionStmt{Name: name, Params: params, ReturnType: returnType, Body: body}
@@ -1234,6 +1255,13 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 			if err != nil {
 				return nil, err
 			}
+			
+			// Resolve empty list/record types to match expected parameter types
+			if isUnresolvedPlaceholder(argTy) {
+				resolveTypes(arg, ft.Params[i])
+				argTy = ft.Params[i]
+			}
+			
 			if !tc.equalTypes(argTy, ft.Params[i]) {
 				return nil, fmt.Errorf("argument %d type mismatch: expected %v, got %v", i, ft.Params[i], argTy)
 			}
@@ -1254,6 +1282,10 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 			var currentElemTy Type
 			if _, ok := elem.(*SpreadExpr); ok {
 				if lt, ok := ty.(ListType); ok {
+					// Skip empty spread lists (they contribute nothing to type inference)
+					if isUnresolvedPlaceholder(lt) || lt.Element == nil {
+						continue
+					}
 					currentElemTy = lt.Element
 				} else {
 					return nil, fmt.Errorf("spread on non-list")
@@ -1273,6 +1305,13 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 				}
 			}
 		}
+		
+		// If all elements were empty spreads, we need to infer the type from context
+		if elemTy == nil {
+			e.Type = ListType{Element: nil} // Placeholder like empty list
+			return e.Type, nil
+		}
+		
 		ty := ListType{Element: elemTy}
 		e.Type = ty
 		return ty, nil

@@ -1,0 +1,12 @@
+fn main(): int
+    # This should work without segfaulting
+    empty: list(int) = {}
+    result: list(int) = {..empty, 1}
+    print(len(result))
+    
+    # This should also work without segfaulting - direct empty list spread
+    result2: list(int) = {..{}, 1}
+    print(len(result2))
+    
+    0
+end

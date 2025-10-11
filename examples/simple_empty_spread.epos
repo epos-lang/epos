@@ -1,0 +1,6 @@
+fn main(): int
+    # Test simple case - spread empty list into non-empty list
+    result: list(int) = {..{}, 1}
+    print("success")
+    0
+end

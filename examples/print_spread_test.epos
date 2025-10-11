@@ -1,0 +1,5 @@
+fn main(): int
+    # Test the specific example from the issue
+    print({..{}, 1})
+    0
+end

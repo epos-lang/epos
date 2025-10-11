@@ -15,10 +15,10 @@
 - [x] Make functions able to not have a return argument
 - [ ] Remove `type` type and make `type` a keyword
 - [ ] Change `fn(int) -> int` type to `(int) -> int`
-- [!] Make `match` expressions passable as implicit returns
+- [x] Make `match` expressions passable as implicit returns
 - [!] Add string interpolation (example: `"Hello #{name}!"` or `[[Hello #{name}!]]`)
 - [ ] Add `_` as a discard variable name
-- [ ] Array first/last pattern matching (`{first, ..last}` or `{first | last}` ??)
+- [ ] Array first/last pattern matching (`{first, ..last}`
 - [ ] Add piping operator (`|>`)
 - [ ] Remove `if`/`while` statements
 - [ ] Make variables immutable

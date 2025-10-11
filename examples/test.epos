@@ -1,16 +1,13 @@
 # test.epos
 
-#[fn nums_each(list_of_nums: list(int), index: int)
-  print(elem(list_of_nums, index))
-  match index < len(list_of_nums) then
-    true -> nums_each(list_of_nums, index + 1)
-    false -> print("done")
+fn call_fn(caller_fn: fn(int) -> int, nums: list(int), index: int, result_list: list(int)): list(int)
+  result: list(int) = match index < len(nums) then
+    true -> call_fn(caller_fn, nums, index + 1, {..result_list, caller_fn(elem(nums, index))})
+    _ -> result_list
   end
+  result
 end
-
-nums_each({1, 2, 3, 4, 5}, 0)]#
-
-fn print_a(a: int)
-  print(a)
+fn double(a: int): int
+  a * 2
 end
-print_a(1)
+print(call_fn(double, {1, 2, 3, 4, 5}, 0, {0}))

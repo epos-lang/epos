@@ -1,0 +1,7 @@
+fn main(): int
+    # Test with named empty list
+    empty: list(int) = {}
+    result: list(int) = {..empty, 1}
+    print("success")
+    0
+end

@@ -1,0 +1,14 @@
+fn list_fn(nums: list(int))
+    print("got list")
+end
+
+fn main(): int
+    # This should work
+    nums: list(int) = {}
+    list_fn(nums)
+    
+    # This should also work but currently fails
+    list_fn({})
+    
+    0
+end

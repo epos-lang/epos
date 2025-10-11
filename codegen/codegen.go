@@ -669,13 +669,20 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 		} else {
 			callee, bb = cg.genExpr(bb, e.Callee, vars)
 		}
-		var args []value.Value
-		for _, arg := range e.Args {
-			argVal, _ := cg.genExpr(bb, arg, vars)
-			// argVal, bb := cg.genExpr(bb, arg, vars)
-			args = append(args, argVal)
+		
+		// Only process arguments for regular function calls, not built-ins
+		if callee != nil {
+			var args []value.Value
+			for _, arg := range e.Args {
+				var argVal value.Value
+				argVal, bb = cg.genExpr(bb, arg, vars)
+				args = append(args, argVal)
+			}
+			return bb.NewCall(callee, args...), bb
 		}
-		return bb.NewCall(callee, args...), bb
+		
+		// This should not be reached as all cases above should return
+		panic("unreachable code in CallExpr generation")
 	case *parser.MatchExpr:
 		cg.matchCounter++
 		id := cg.matchCounter
@@ -749,14 +756,32 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 		currentBB := bb
 		for _, el := range e.Elements {
 			if se, ok := el.(*parser.SpreadExpr); ok {
+				// Skip empty list spreads
+				if le, ok := se.Expr.(*parser.ListExpr); ok && len(le.Elements) == 0 {
+					continue
+				}
 				spreadVal, newBB := cg.genExpr(currentBB, se.Expr, vars)
 				currentBB = newBB
 				spreadStructTy := spreadVal.Type().(*types.PointerType).ElemType
+				
+				// Check if the list pointer is null (empty list)
+				nullPtr := constant.NewNull(spreadVal.Type().(*types.PointerType))
+				isNull := currentBB.NewICmp(enum.IPredEQ, spreadVal, nullPtr)
+				notNullBB := currentBB.Parent.NewBlock(fmt.Sprintf("spread_not_null_%d", id))
+				contBB := currentBB.Parent.NewBlock(fmt.Sprintf("spread_cont_%d", id))
+				currentBB.NewCondBr(isNull, contBB, notNullBB)
+				
+				// Not null block - read length
+				currentBB = notNullBB
 				spreadLengthPtr := currentBB.NewGetElementPtr(spreadStructTy, spreadVal, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
 				spreadLength := currentBB.NewLoad(types.I64, spreadLengthPtr)
 				currentTotal := currentBB.NewLoad(types.I64, totalLengthAlloc)
 				newTotal := currentBB.NewAdd(currentTotal, spreadLength)
 				currentBB.NewStore(newTotal, totalLengthAlloc)
+				currentBB.NewBr(contBB)
+				
+				// Continue block
+				currentBB = contBB
 			} else {
 				currentTotal := currentBB.NewLoad(types.I64, totalLengthAlloc)
 				newTotal := currentBB.NewAdd(currentTotal, constant.NewInt(types.I64, 1))
@@ -782,11 +807,34 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 		bb.NewStore(arrayAlloc, currentPtrAlloc)
 		for _, el := range e.Elements {
 			if se, ok := el.(*parser.SpreadExpr); ok {
+				// Skip empty list spreads
+				if le, ok := se.Expr.(*parser.ListExpr); ok && len(le.Elements) == 0 {
+					continue
+				}
 				spreadVal, newBB := cg.genExpr(bb, se.Expr, vars)
 				bb = newBB
 				spreadStructTy := spreadVal.Type().(*types.PointerType).ElemType
+				
+				// Check if the list pointer is null (empty list)  
+				nullPtr := constant.NewNull(spreadVal.Type().(*types.PointerType))
+				isNull := bb.NewICmp(enum.IPredEQ, spreadVal, nullPtr)
+				notNullBB := bb.Parent.NewBlock(fmt.Sprintf("spread_not_null_copy_%d", id))
+				skipBB := bb.Parent.NewBlock(fmt.Sprintf("spread_skip_copy_%d", id))
+				bb.NewCondBr(isNull, skipBB, notNullBB)
+				
+				// Not null block - check length and copy if needed
+				bb = notNullBB
 				spreadLengthPtr := bb.NewGetElementPtr(spreadStructTy, spreadVal, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
 				spreadLength := bb.NewLoad(types.I64, spreadLengthPtr)
+				
+				// Only copy if the list is not empty
+				isNonEmpty := bb.NewICmp(enum.IPredNE, spreadLength, constant.NewInt(types.I64, 0))
+				copyBB := bb.Parent.NewBlock(fmt.Sprintf("spread_copy_%d", id))
+				nextBB := bb.Parent.NewBlock(fmt.Sprintf("spread_next_%d", id))
+				bb.NewCondBr(isNonEmpty, copyBB, nextBB)
+				
+				// Copy block
+				bb = copyBB
 				spreadDataPtrPtr := bb.NewGetElementPtr(spreadStructTy, spreadVal, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 1))
 				spreadDataPtr := bb.NewLoad(types.NewPointer(elemTy), spreadDataPtrPtr)
 				spreadSize := bb.NewMul(spreadLength, elemSize)
@@ -796,6 +844,14 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 				bb.NewCall(cg.memcpy, dst, src, spreadSize, constant.NewBool(false))
 				newCurrent := bb.NewGetElementPtr(elemTy, currentPtrLoaded, spreadLength)
 				bb.NewStore(newCurrent, currentPtrAlloc)
+				bb.NewBr(nextBB)
+				
+				// Next block
+				bb = nextBB
+				bb.NewBr(skipBB)
+				
+				// Skip block - continue to next element
+				bb = skipBB
 			} else {
 				val, newBB := cg.genExpr(bb, el, vars)
 				bb = newBB
@@ -821,6 +877,8 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 		afterBB := bb.Parent.NewBlock(fmt.Sprintf("list_after_%d", id))
 		allocEndBB.NewBr(afterBB)
 		zeroBB.NewBr(afterBB)
+		
+		// Switch to the afterBB and create the phi node
 		bb = afterBB
 		nullList := constant.NewNull(types.NewPointer(structTy))
 		result := bb.NewPhi(ir.NewIncoming(nullList, zeroBB), ir.NewIncoming(structAlloc, allocEndBB))
