@@ -13,14 +13,14 @@
 - [x] Add list spread operator (`{1, ..{2, 3}}` or `{..{1, 2}, 3}`)
 - [x] Add compare function (`compare("a", "a")`/`compare({1, 2}, {1, 2})`). Note: does not work on records
 - [x] Make functions able to not have a return argument
+- [x] Make `match` expressions passable as implicit returns
+- [x] Add string interpolation (example: `"Hello #{name}!"` or `[[Hello #{name}!]]`)
 - [ ] Remove `type` type and make `type` a keyword
 - [ ] Change `fn(int) -> int` type to `(int) -> int`
-- [x] Make `match` expressions passable as implicit returns
-- [!] Add string interpolation (example: `"Hello #{name}!"` or `[[Hello #{name}!]]`)
 - [ ] Add `_` as a discard variable name
 - [ ] Array first/last pattern matching (`{first, ..last}`
 - [ ] Add piping operator (`|>`)
-- [ ] Remove `if`/`while` statements
+- [ ] Remove `if`/`while`/`return` statements
 - [ ] Make variables immutable
 - [ ] Add `assert` keyword (example: `assert(a + b, 3)`)
 - [ ] Add generics

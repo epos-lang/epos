@@ -1,0 +1,21 @@
+fn main(): int
+    name: string = "World"
+    age: int = 25
+    
+    # Test single-line string interpolation
+    greeting: string = "Hello #{name}!"
+    msg: string = "#{name} is #{age} years old"
+    
+    print(greeting)
+    print(msg)
+    
+    # Test multi-line string interpolation  
+    multiline: string = [[Welcome to Epos!
+User: #{name}
+Age: #{age}
+Status: Active]]
+    
+    print(multiline)
+    
+    return 0
+end

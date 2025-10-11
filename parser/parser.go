@@ -56,6 +56,7 @@ const (
 	TokenQuestion
 	TokenDot
 	TokenSpread
+	TokenInterpolatedString
 )
 
 // Token struct
@@ -161,6 +162,17 @@ type StringExpr struct {
 	Type  Type
 }
 
+type InterpolatedStringExpr struct {
+	Parts []StringPart
+	Type  Type
+}
+
+type StringPart struct {
+	IsExpr bool
+	Text   string
+	Expr   Expr
+}
+
 type ListExpr struct {
 	Elements []Expr
 	Type     Type
@@ -248,10 +260,10 @@ func (l *Lexer) Lex() []Token {
 		case unicode.IsLetter(rune(ch)):
 			l.lexIdentifier()
 		case ch == '"':
-			l.lexString()
+			l.lexStringOrInterpolated()
 		case ch == '[':
 			if l.peekChar() == '[' {
-				l.lexMultiLineString()
+				l.lexMultiLineStringOrInterpolated()
 			} else {
 				l.addToken(TokenLBracket, "[")
 			}
@@ -361,29 +373,136 @@ func (l *Lexer) addToken(tt TokenType, val string) {
 	l.pos += len(val)
 }
 
-func (l *Lexer) lexString() {
+func (l *Lexer) lexStringOrInterpolated() {
 	l.pos++ // skip opening "
 	start := l.pos
-	for l.pos < len(l.input) && l.input[l.pos] != '"' {
-		l.pos++
-	}
-	str := l.input[start:l.pos]
-	l.pos++ // skip closing "
-	l.tokens = append(l.tokens, Token{Type: TokenString, Value: str})
-}
-
-func (l *Lexer) lexMultiLineString() {
-	l.pos += 2 // skip opening [[
-	start := l.pos
-	for l.pos < len(l.input)-1 {
-		if l.input[l.pos] == ']' && l.input[l.pos+1] == ']' {
+	hasInterpolation := false
+	
+	// First pass: check if it contains interpolation
+	tempPos := l.pos
+	for tempPos < len(l.input) && l.input[tempPos] != '"' {
+		if tempPos+1 < len(l.input) && l.input[tempPos] == '#' && l.input[tempPos+1] == '{' {
+			hasInterpolation = true
 			break
 		}
-		l.pos++
+		tempPos++
 	}
-	str := l.input[start:l.pos]
-	l.pos += 2 // skip closing ]]
-	l.tokens = append(l.tokens, Token{Type: TokenString, Value: str})
+	
+	if hasInterpolation {
+		l.lexInterpolatedString('"')
+	} else {
+		// Simple string
+		for l.pos < len(l.input) && l.input[l.pos] != '"' {
+			l.pos++
+		}
+		str := l.input[start:l.pos]
+		l.pos++ // skip closing "
+		l.tokens = append(l.tokens, Token{Type: TokenString, Value: str})
+	}
+}
+
+func (l *Lexer) lexMultiLineStringOrInterpolated() {
+	l.pos += 2 // skip opening [[
+	start := l.pos
+	hasInterpolation := false
+	
+	// First pass: check if it contains interpolation
+	tempPos := l.pos
+	for tempPos < len(l.input)-1 {
+		if l.input[tempPos] == ']' && l.input[tempPos+1] == ']' {
+			break
+		}
+		if tempPos+1 < len(l.input) && l.input[tempPos] == '#' && l.input[tempPos+1] == '{' {
+			hasInterpolation = true
+			break
+		}
+		tempPos++
+	}
+	
+	if hasInterpolation {
+		l.lexInterpolatedString(']')
+	} else {
+		// Simple multi-line string
+		for l.pos < len(l.input)-1 {
+			if l.input[l.pos] == ']' && l.input[l.pos+1] == ']' {
+				break
+			}
+			l.pos++
+		}
+		str := l.input[start:l.pos]
+		l.pos += 2 // skip closing ]]
+		l.tokens = append(l.tokens, Token{Type: TokenString, Value: str})
+	}
+}
+
+func (l *Lexer) lexInterpolatedString(delimiter byte) {
+	var parts []string
+	start := l.pos
+	
+	for {
+		// Check for end of string
+		if delimiter == '"' && l.pos < len(l.input) && l.input[l.pos] == '"' {
+			break
+		}
+		if delimiter == ']' && l.pos < len(l.input)-1 && l.input[l.pos] == ']' && l.input[l.pos+1] == ']' {
+			break
+		}
+		
+		// Check for interpolation start
+		if l.pos+1 < len(l.input) && l.input[l.pos] == '#' && l.input[l.pos+1] == '{' {
+			// Add text part before interpolation
+			if l.pos > start {
+				parts = append(parts, l.input[start:l.pos])
+			}
+			
+			// Skip #{
+			l.pos += 2
+			
+			// Find matching }
+			braceDepth := 1
+			exprStart := l.pos
+			for l.pos < len(l.input) && braceDepth > 0 {
+				if l.input[l.pos] == '{' {
+					braceDepth++
+				} else if l.input[l.pos] == '}' {
+					braceDepth--
+				}
+				l.pos++
+			}
+			
+			if braceDepth > 0 {
+				panic("unterminated interpolation expression")
+			}
+			
+			// Add expression part (without the closing })
+			expr := l.input[exprStart : l.pos-1]
+			parts = append(parts, "#{"+expr+"}")
+			
+			start = l.pos
+		} else {
+			l.pos++
+		}
+	}
+	
+	// Add remaining text
+	if l.pos > start {
+		parts = append(parts, l.input[start:l.pos])
+	}
+	
+	// Skip closing delimiter
+	if delimiter == '"' {
+		l.pos++
+	} else {
+		l.pos += 2
+	}
+	
+	// Join parts and create token
+	fullString := ""
+	for _, part := range parts {
+		fullString += part
+	}
+	
+	l.tokens = append(l.tokens, Token{Type: TokenInterpolatedString, Value: fullString})
 }
 
 func (l *Lexer) lexNumber() {
@@ -715,6 +834,9 @@ func (p *Parser) parsePrimary() Expr {
 	case TokenString:
 		p.pos++
 		expr = &StringExpr{Value: tok.Value}
+	case TokenInterpolatedString:
+		p.pos++
+		expr = p.parseInterpolatedString(tok.Value)
 	case TokenTrue:
 		p.pos++
 		expr = &BoolExpr{Value: true}
@@ -942,6 +1064,65 @@ func (tc *TypeChecker) resolveType(t Type) Type {
 	}
 }
 
+func (p *Parser) parseInterpolatedString(value string) *InterpolatedStringExpr {
+	var parts []StringPart
+	i := 0
+	
+	for i < len(value) {
+		// Find next interpolation
+		start := i
+		for i < len(value) {
+			if i+1 < len(value) && value[i] == '#' && value[i+1] == '{' {
+				break
+			}
+			i++
+		}
+		
+		// Add text part if any
+		if i > start {
+			parts = append(parts, StringPart{
+				IsExpr: false,
+				Text:   value[start:i],
+			})
+		}
+		
+		// Parse interpolation if found
+		if i < len(value) && i+1 < len(value) && value[i] == '#' && value[i+1] == '{' {
+			i += 2 // skip #{
+			exprStart := i
+			braceDepth := 1
+			
+			// Find matching }
+			for i < len(value) && braceDepth > 0 {
+				if value[i] == '{' {
+					braceDepth++
+				} else if value[i] == '}' {
+					braceDepth--
+				}
+				i++
+			}
+			
+			if braceDepth > 0 {
+				panic("unterminated interpolation expression")
+			}
+			
+			// Parse the expression
+			exprStr := value[exprStart : i-1]
+			exprLexer := NewLexer(exprStr)
+			exprTokens := exprLexer.Lex()
+			exprParser := NewParser(exprTokens)
+			expr := exprParser.parseExpr()
+			
+			parts = append(parts, StringPart{
+				IsExpr: true,
+				Expr:   expr,
+			})
+		}
+	}
+	
+	return &InterpolatedStringExpr{Parts: parts}
+}
+
 func (tc *TypeChecker) TypeCheck(stmts []Stmt) error {
 	// Collect function signatures
 	for _, stmt := range stmts {
@@ -1125,6 +1306,19 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 		e.Type = ty
 		return ty, nil
 	case *StringExpr:
+		ty := BasicType("string")
+		e.Type = ty
+		return ty, nil
+	case *InterpolatedStringExpr:
+		// Type check all expression parts
+		for i := range e.Parts {
+			if e.Parts[i].IsExpr {
+				_, err := tc.typeCheckExpr(e.Parts[i].Expr, env)
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
 		ty := BasicType("string")
 		e.Type = ty
 		return ty, nil
@@ -1561,6 +1755,14 @@ func resolveTypes(expr Expr, ty Type) {
 				if fieldExpr, ok := re.Fields[f.Name]; ok {
 					resolveTypes(fieldExpr, f.Ty)
 				}
+			}
+		}
+	} else if ie, ok := expr.(*InterpolatedStringExpr); ok {
+		ie.Type = ty
+		for _, part := range ie.Parts {
+			if part.IsExpr {
+				// For interpolated expressions, we don't force a specific type
+				// They will be converted to string during codegen
 			}
 		}
 	}

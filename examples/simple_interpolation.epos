@@ -1,0 +1,6 @@
+fn main(): int
+  name: string = "World"
+  greeting: string = "Hello #{name}!"
+  print(greeting)
+  return 0
+end

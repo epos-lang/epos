@@ -26,7 +26,9 @@ type CodeGen struct {
 	stringCounter                          int
 	listPrintCounter                       int
 	recordPrintCounter                     int
-	strlen, strcpy, strcat, malloc, memcpy, strcmp, memcmp *ir.Func
+	strlen, strcpy, strcat, malloc, memcpy, strcmp, memcmp, sprintf *ir.Func
+	intFmt                                 *ir.Global
+	intToStringCounter                     int
 }
 
 type varInfo struct {
@@ -127,8 +129,10 @@ func NewCodeGen() *CodeGen {
 	memcpy := m.NewFunc("llvm.memcpy.p0i8.p0i8.i64", types.Void, ir.NewParam("dst", types.NewPointer(types.I8)), ir.NewParam("src", types.NewPointer(types.I8)), ir.NewParam("len", types.I64), ir.NewParam("isvolatile", types.I1))
 	strcmp := m.NewFunc("strcmp", types.I32, ir.NewParam("", types.NewPointer(types.I8)), ir.NewParam("", types.NewPointer(types.I8)))
 	memcmp := m.NewFunc("memcmp", types.I32, ir.NewParam("", types.NewPointer(types.I8)), ir.NewParam("", types.NewPointer(types.I8)), ir.NewParam("", types.I64))
+	sprintf := m.NewFunc("sprintf", types.I32, ir.NewParam("", types.NewPointer(types.I8)), ir.NewParam("", types.NewPointer(types.I8)))
+	sprintf.Sig.Variadic = true
 
-	return &CodeGen{module: m, vars: make(map[string]varInfo), functions: make(map[string]*ir.Func), printf: printf, globalFmt: globalFmt, strFmt: strFmt, ifCounter: 0, whileCounter: 0, matchCounter: 0, stringCounter: 0, listPrintCounter: 0, recordPrintCounter: 0, strlen: strlen, strcpy: strcpy, strcat: strcat, malloc: malloc, memcpy: memcpy, strcmp: strcmp, memcmp: memcmp}
+	return &CodeGen{module: m, vars: make(map[string]varInfo), functions: make(map[string]*ir.Func), printf: printf, globalFmt: globalFmt, strFmt: strFmt, ifCounter: 0, whileCounter: 0, matchCounter: 0, stringCounter: 0, listPrintCounter: 0, recordPrintCounter: 0, intToStringCounter: 0, strlen: strlen, strcpy: strcpy, strcat: strcat, malloc: malloc, memcpy: memcpy, strcmp: strcmp, memcmp: memcmp, sprintf: sprintf}
 }
 
 func (cg *CodeGen) getParserType(expr parser.Expr) parser.Type {
@@ -138,6 +142,8 @@ func (cg *CodeGen) getParserType(expr parser.Expr) parser.Type {
 	case *parser.BoolExpr:
 		return e.Type
 	case *parser.StringExpr:
+		return e.Type
+	case *parser.InterpolatedStringExpr:
 		return e.Type
 	case *parser.VarExpr:
 		return e.Type
@@ -550,6 +556,8 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 		ptr := bb.NewGetElementPtr(elemType, globalStr, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
 		ptr.InBounds = true
 		return ptr, bb
+	case *parser.InterpolatedStringExpr:
+		return cg.generateInterpolatedString(e, bb, vars)
 	case *parser.VarExpr:
 		v, ok := vars[e.Name]
 		if ok {
@@ -1137,4 +1145,105 @@ func (cg *CodeGen) genCompare(bb *ir.Block, left, right value.Value, pty parser.
 	}
 	panic("unsupported type for comparison")
 	return constant.NewBool(false)
+}
+
+func (cg *CodeGen) generateInterpolatedString(e *parser.InterpolatedStringExpr, bb *ir.Block, vars map[string]varInfo) (value.Value, *ir.Block) {
+	if len(e.Parts) == 0 {
+		// Empty interpolated string
+		strConst := constant.NewCharArrayFromString("\x00")
+		cg.stringCounter++
+		name := fmt.Sprintf("str_%d", cg.stringCounter)
+		globalStr := cg.module.NewGlobalDef(name, strConst)
+		elemType := globalStr.Type().(*types.PointerType).ElemType
+		ptr := bb.NewGetElementPtr(elemType, globalStr, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
+		ptr.InBounds = true
+		return ptr, bb
+	}
+
+	// First, calculate total length needed
+	var totalLen value.Value = constant.NewInt(types.I64, 1) // for null terminator
+
+	// Arrays to store string parts and their lengths
+	var stringParts []value.Value
+	var partLengths []value.Value
+
+	for _, part := range e.Parts {
+		if part.IsExpr {
+			// Generate code for the expression
+			exprVal, newBB := cg.genExpr(bb, part.Expr, vars)
+			bb = newBB
+			
+			// Convert expression to string
+			var strVal value.Value
+			switch cg.getParserType(part.Expr).(parser.BasicType) {
+			case "int":
+				// Use sprintf to convert int to string
+				bufSize := constant.NewInt(types.I64, 32) // enough for most integers
+				buf := bb.NewCall(cg.malloc, bufSize)
+				fmtStr := cg.getIntFormatString()
+				elemType := fmtStr.Type().(*types.PointerType).ElemType
+				fmtPtr := bb.NewGetElementPtr(elemType, fmtStr, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
+				fmtPtr.InBounds = true
+				bb.NewCall(cg.sprintf, buf, fmtPtr, exprVal)
+				strVal = buf
+			case "string":
+				strVal = exprVal
+			default:
+				// For other types, convert to string representation
+				strVal = exprVal
+			}
+			
+			// Get length of the string part
+			partLen := bb.NewCall(cg.strlen, strVal)
+			
+			stringParts = append(stringParts, strVal)
+			partLengths = append(partLengths, partLen)
+			totalLen = bb.NewAdd(totalLen, partLen)
+		} else {
+			// Static text part
+			if part.Text != "" {
+				strConst := constant.NewCharArrayFromString(part.Text + "\x00")
+				cg.stringCounter++
+				name := fmt.Sprintf("str_%d", cg.stringCounter)
+				globalStr := cg.module.NewGlobalDef(name, strConst)
+				elemType := globalStr.Type().(*types.PointerType).ElemType
+				ptr := bb.NewGetElementPtr(elemType, globalStr, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
+				ptr.InBounds = true
+				
+				partLen := constant.NewInt(types.I64, int64(len(part.Text)))
+				
+				stringParts = append(stringParts, ptr)
+				partLengths = append(partLengths, partLen)
+				totalLen = bb.NewAdd(totalLen, partLen)
+			}
+		}
+	}
+
+	// Allocate memory for the result string
+	result := bb.NewCall(cg.malloc, totalLen)
+	
+	// Initialize result string as empty
+	emptyStr := constant.NewCharArrayFromString("\x00")
+	cg.stringCounter++
+	emptyName := fmt.Sprintf("str_%d", cg.stringCounter)
+	globalEmpty := cg.module.NewGlobalDef(emptyName, emptyStr)
+	elemType := globalEmpty.Type().(*types.PointerType).ElemType
+	emptyPtr := bb.NewGetElementPtr(elemType, globalEmpty, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
+	emptyPtr.InBounds = true
+	bb.NewCall(cg.strcpy, result, emptyPtr)
+
+	// Concatenate all parts
+	for _, part := range stringParts {
+		bb.NewCall(cg.strcat, result, part)
+	}
+
+	return result, bb
+}
+
+func (cg *CodeGen) getIntFormatString() *ir.Global {
+	if cg.intFmt == nil {
+		fmtStr := constant.NewCharArrayFromString("%lld\x00")
+		cg.intFmt = cg.module.NewGlobalDef("int_fmt", fmtStr)
+	}
+	return cg.intFmt
 }

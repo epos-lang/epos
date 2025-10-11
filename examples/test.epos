@@ -1,11 +1,10 @@
 # test.epos
 
 fn call_fn(caller_fn: fn(int) -> int, nums: list(int), index: int, result_list: list(int)): list(int)
-  result: list(int) = match index < len(nums) then
+  match index < len(nums) then
     true -> call_fn(caller_fn, nums, index + 1, {..result_list, caller_fn(elem(nums, index))})
     _ -> result_list
   end
-  result
 end
 fn double(a: int): int
   a * 2
