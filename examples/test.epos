@@ -1,4 +1,16 @@
 # test.epos
 
-print(compare("hello", "hello"))
-print(compare({1, 2}, {1, 2}))
+#[fn nums_each(list_of_nums: list(int), index: int)
+  print(elem(list_of_nums, index))
+  match index < len(list_of_nums) then
+    true -> nums_each(list_of_nums, index + 1)
+    false -> print("done")
+  end
+end
+
+nums_each({1, 2, 3, 4, 5}, 0)]#
+
+fn print_a(a: int)
+  print(a)
+end
+print_a(1)

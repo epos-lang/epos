@@ -526,7 +526,7 @@ func (p *Parser) parseFunction() *FunctionStmt {
 		body = append(body, p.parseStmt())
 	}
 	p.consume(TokenEnd)
-	if len(body) > 0 {
+	if len(body) > 0 && returnType != nil {
 		if exprStmt, ok := body[len(body)-1].(*ExprStmt); ok {
 			body[len(body)-1] = &ReturnStmt{Expr: exprStmt.Expr}
 		}

@@ -13,15 +13,33 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Println("Usage: epos <input.lua> [-o output]")
+		fmt.Println("Usage: epos <input.epos> [-o output] [-r]")
 		os.Exit(1)
 	}
 
-	inputFile := os.Args[1]
-	var outputFile string
-	if len(os.Args) > 3 && os.Args[2] == "-o" {
-		outputFile = os.Args[3]
-	} else {
+	var inputFile, outputFile string
+	var runAfterCompile bool
+
+	// Parse arguments
+	args := os.Args[1:]
+	for i, arg := range args {
+		if arg == "-r" {
+			runAfterCompile = true
+		} else if arg == "-o" && i+1 < len(args) {
+			outputFile = args[i+1]
+			i++ // Skip next arg since it's the output filename
+		} else if !strings.HasPrefix(arg, "-") && inputFile == "" {
+			inputFile = arg
+		}
+	}
+
+	if inputFile == "" {
+		fmt.Println("Error: No input file specified")
+		fmt.Println("Usage: epos <input.epos> [-o output] [-r]")
+		os.Exit(1)
+	}
+
+	if outputFile == "" {
 		base := filepath.Base(inputFile)
 		name := strings.TrimSuffix(base, filepath.Ext(base))
 		outputFile = "build/" + name
@@ -95,4 +113,16 @@ func main() {
 	os.Remove(tempS)
 
 	fmt.Printf("Executable created: %s\n", outputFile)
+
+	// Run the executable if -r flag was provided
+	if runAfterCompile {
+		fmt.Printf("Running %s...\n", outputFile)
+		cmd = exec.Command("./" + outputFile)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			fmt.Printf("Error running executable: %v\n", err)
+			os.Exit(1)
+		}
+	}
 }

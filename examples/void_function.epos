@@ -1,0 +1,8 @@
+fn print_number(a: int)
+    print(a)
+end
+
+fn main(): int
+    print_number(42)
+    0
+end

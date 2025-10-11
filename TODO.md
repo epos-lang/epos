@@ -8,11 +8,12 @@
 - [x] Fix multiline comments
 - [x] Add records
 - [x] Add `type` type (example: `list_of_bool_type: type = list(bool)`)
-- [ ] Remove `type` type and make `type` a keyword
 - [x] Add function type (example: `add_type: type = fn(int, int) -> int`)
 - [x] Add `len` function to get length of lists (`len({1, 2, 3}) # => 2`)
 - [x] Add list spread operator (`{1, ..{2, 3}}` or `{..{1, 2}, 3}`)
 - [x] Add compare function (`compare("a", "a")`/`compare({1, 2}, {1, 2})`). Note: does not work on records
+- [x] Make functions able to not have a return argument
+- [ ] Remove `type` type and make `type` a keyword
 - [ ] Change `fn(int) -> int` type to `(int) -> int`
 - [!] Make `match` expressions passable as implicit returns
 - [!] Add string interpolation (example: `"Hello #{name}!"` or `[[Hello #{name}!]]`)
