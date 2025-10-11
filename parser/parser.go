@@ -57,6 +57,7 @@ const (
 	TokenDot
 	TokenSpread
 	TokenInterpolatedString
+	TokenAssert
 )
 
 // Token struct
@@ -235,6 +236,11 @@ type Param struct {
 type ExprStmt struct {
 	Expr Expr
 	Type Type
+}
+
+type AssertStmt struct {
+	Condition Expr
+	Type      Type
 }
 
 // Lexer
@@ -551,6 +557,8 @@ func (l *Lexer) lexIdentifier() {
 		l.tokens = append(l.tokens, Token{Type: TokenFalse, Value: id})
 	} else if id == "record" {
 		l.tokens = append(l.tokens, Token{Type: TokenRecord, Value: id})
+	} else if id == "assert" {
+		l.tokens = append(l.tokens, Token{Type: TokenAssert, Value: id})
 	} else {
 		l.tokens = append(l.tokens, Token{Type: TokenIdentifier, Value: id})
 	}
@@ -590,6 +598,8 @@ func (p *Parser) parseStmt() Stmt {
 		return p.parseMatch()
 	} else if tok.Type == TokenRecord {
 		return p.parseRecordDecl()
+	} else if tok.Type == TokenAssert {
+		return p.parseAssert()
 	} else {
 		return &ExprStmt{Expr: p.parseExpr()}
 	}
@@ -737,6 +747,12 @@ func (p *Parser) parseReturn() *ReturnStmt {
 	p.consume(TokenReturn)
 	expr := p.parseExpr()
 	return &ReturnStmt{Expr: expr}
+}
+
+func (p *Parser) parseAssert() *AssertStmt {
+	p.consume(TokenAssert)
+	condition := p.parseExpr()
+	return &AssertStmt{Condition: condition}
 }
 
 func (p *Parser) parseRelational() Expr {
@@ -1288,6 +1304,17 @@ func (tc *TypeChecker) typeCheckStmt(stmt Stmt, env map[string]Type) error {
 				return err
 			}
 		}
+		return nil
+
+	case *AssertStmt:
+		condTy, err := tc.typeCheckExpr(s.Condition, env)
+		if err != nil {
+			return err
+		}
+		if condTy != BasicType("bool") && condTy != BasicType("int") {
+			return fmt.Errorf("assert condition must be bool or int, got %v", condTy)
+		}
+		s.Type = BasicType("void")
 		return nil
 
 	default:

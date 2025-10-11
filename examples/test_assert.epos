@@ -1,0 +1,12 @@
+# Test assert functionality
+
+assert 1 + 1 == 2
+assert true
+assert 5 > 3
+
+# This should pass
+x = 10
+assert x == 10
+
+# This should fail if uncommented
+#assert false

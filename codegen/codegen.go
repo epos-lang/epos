@@ -24,11 +24,13 @@ type CodeGen struct {
 	whileCounter                           int
 	matchCounter                           int
 	stringCounter                          int
+	assertCounter                          int
 	listPrintCounter                       int
 	recordPrintCounter                     int
-	strlen, strcpy, strcat, malloc, memcpy, strcmp, memcmp, sprintf *ir.Func
+	strlen, strcpy, strcat, malloc, memcpy, strcmp, memcmp, sprintf, exit *ir.Func
 	intFmt                                 *ir.Global
 	intToStringCounter                     int
+	assertFailMsg                          *ir.Global
 }
 
 type varInfo struct {
@@ -131,8 +133,10 @@ func NewCodeGen() *CodeGen {
 	memcmp := m.NewFunc("memcmp", types.I32, ir.NewParam("", types.NewPointer(types.I8)), ir.NewParam("", types.NewPointer(types.I8)), ir.NewParam("", types.I64))
 	sprintf := m.NewFunc("sprintf", types.I32, ir.NewParam("", types.NewPointer(types.I8)), ir.NewParam("", types.NewPointer(types.I8)))
 	sprintf.Sig.Variadic = true
+	exit := m.NewFunc("exit", types.Void, ir.NewParam("", types.I32))
+	assertFailMsg := m.NewGlobalDef("assert_fail_msg", constant.NewCharArrayFromString("Assertion failed\n\x00"))
 
-	return &CodeGen{module: m, vars: make(map[string]varInfo), functions: make(map[string]*ir.Func), printf: printf, globalFmt: globalFmt, strFmt: strFmt, ifCounter: 0, whileCounter: 0, matchCounter: 0, stringCounter: 0, listPrintCounter: 0, recordPrintCounter: 0, intToStringCounter: 0, strlen: strlen, strcpy: strcpy, strcat: strcat, malloc: malloc, memcpy: memcpy, strcmp: strcmp, memcmp: memcmp, sprintf: sprintf}
+	return &CodeGen{module: m, vars: make(map[string]varInfo), functions: make(map[string]*ir.Func), printf: printf, globalFmt: globalFmt, strFmt: strFmt, ifCounter: 0, whileCounter: 0, matchCounter: 0, stringCounter: 0, listPrintCounter: 0, recordPrintCounter: 0, intToStringCounter: 0, strlen: strlen, strcpy: strcpy, strcat: strcat, malloc: malloc, memcpy: memcpy, strcmp: strcmp, memcmp: memcmp, sprintf: sprintf, exit: exit, assertFailMsg: assertFailMsg}
 }
 
 func (cg *CodeGen) getParserType(expr parser.Expr) parser.Type {
@@ -524,6 +528,33 @@ func (cg *CodeGen) genStmt(bb *ir.Block, stmt parser.Stmt, vars map[string]varIn
 			bb.NewBr(defaultBB)
 		}
 		return mergeBB
+
+	case *parser.AssertStmt:
+		cg.assertCounter++
+		id := cg.assertCounter
+		condVal, bb := cg.genExpr(bb, s.Condition, vars)
+		condTyp := condVal.Type()
+		var cond value.Value
+		if condTyp.Equal(types.I1) {
+			cond = condVal
+		} else if condTyp.Equal(types.I64) {
+			zero := constant.NewInt(types.I64, 0)
+			cond = bb.NewICmp(enum.IPredNE, condVal, zero)
+		} else {
+			panic("invalid condition type in assert")
+		}
+
+		failBB := bb.Parent.NewBlock(fmt.Sprintf("assert_fail_%d", id))
+		passBB := bb.Parent.NewBlock(fmt.Sprintf("assert_pass_%d", id))
+		
+		bb.NewCondBr(cond, passBB, failBB)
+		
+		// Generate assertion failure block
+		failBB.NewCall(cg.printf, cg.assertFailMsg)
+		failBB.NewCall(cg.exit, constant.NewInt(types.I32, 1))
+		failBB.NewUnreachable()
+		
+		return passBB
 
 	default:
 		panic("unknown statement type")

@@ -1,0 +1,2 @@
+assert false
+print("This should not print")
