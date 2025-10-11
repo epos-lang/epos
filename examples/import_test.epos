@@ -1,0 +1,13 @@
+# Test imports and function visibility
+
+#import "./math_module.epos"
+import add from "./math_module.epos"
+#import {multiply, divide} from "./math_module.epos"
+
+fn main(): int
+    x = add(5, 3)
+ #   y = multiply(x, 2)
+  #  z = divide(y, 4)
+   # z
+   x
+end

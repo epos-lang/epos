@@ -1,0 +1,13 @@
+# Test function visibility
+
+fn public_function*(x: int): int
+    private_helper(x) + 10
+end
+
+fn private_helper(x: int): int
+    x * 2
+end
+
+fn main*(): int
+    public_function(5)
+end

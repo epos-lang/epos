@@ -17,12 +17,12 @@
 - [x] Add string interpolation (example: `"Hello #{name}!"` or `[[Hello #{name}!]]`)
 - [x] Add `assert` keyword (example: `assert a + b == 3`)
 - [x] Add generics
+- [x] Add `import` (examples: `import "./other-file.epos"`, `import {function, function2} from "./local-module"`)
 - [!] Remove `type` type and make `type` a keyword (example: `type new_type = int`)
 - [??] Change `fn(int) -> int` type to `(int) -> int`
 - [ ] Array first/last pattern matching (`{first, ..last}`
 - [ ] Add piping operator (`|>`)
 - [ ] Remove `if`/`while`/`return` statements
 - [ ] Make variables immutable
-- [ ] Add `import` (examples: `import "./other-file.epos"`, `import function from "./local-module"`, `import {function, function2} from "./local-module"`, `import {function1, function2} from "https://github.com/...."`, `import function from std/http`)
 - [ ] Add ranges (example: `{1..5} #=> {1, 2, 3, 4, 5}`)
 - [ ] Add `_` as a discard variable name (example: `_: int = 1 #=> _ is discarded` or `_list_of_nums: list(int) = {1, 2}`)

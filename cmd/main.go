@@ -11,6 +11,76 @@ import (
 	"strings"
 )
 
+func parseWithImports(filePath string, visited map[string]bool) ([]parser.Stmt, error) {
+	// Check for circular imports
+	absPath, err := filepath.Abs(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve path %s: %v", filePath, err)
+	}
+	
+	if visited[absPath] {
+		return nil, fmt.Errorf("circular import detected: %s", absPath)
+	}
+	visited[absPath] = true
+	
+	// Read and parse the file
+	code, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read file %s: %v", filePath, err)
+	}
+	
+	lexer := parser.NewLexer(string(code))
+	tokens := lexer.Lex()
+	p := parser.NewParser(tokens)
+	stmts := p.Parse()
+	
+	// Collect all statements, processing imports
+	var allStmts []parser.Stmt
+	baseDir := filepath.Dir(absPath)
+	
+	for _, stmt := range stmts {
+		if importStmt, ok := stmt.(*parser.ImportStmt); ok {
+			// Resolve import path relative to current file
+			var importPath string
+			if filepath.IsAbs(importStmt.Path) {
+				importPath = importStmt.Path
+			} else {
+				importPath = filepath.Join(baseDir, importStmt.Path)
+			}
+			
+			// Recursively parse imported file
+			importedStmts, err := parseWithImports(importPath, visited)
+			if err != nil {
+				return nil, fmt.Errorf("error parsing import %s: %v", importPath, err)
+			}
+			
+			// Add imported statements (only functions needed for compilation)
+			for _, importedStmt := range importedStmts {
+				if funcStmt, ok := importedStmt.(*parser.FunctionStmt); ok {
+					// Only include functions that are actually imported
+					if importStmt.IsWildcard && funcStmt.IsPublic {
+						allStmts = append(allStmts, importedStmt)
+					} else if len(importStmt.Items) > 0 {
+						for _, item := range importStmt.Items {
+							if funcStmt.Name == item {
+								allStmts = append(allStmts, importedStmt)
+								break
+							}
+						}
+					} else if importStmt.Alias != "" && funcStmt.Name == importStmt.Alias {
+						allStmts = append(allStmts, importedStmt)
+					}
+				}
+			}
+		} else {
+			// Regular statement
+			allStmts = append(allStmts, stmt)
+		}
+	}
+	
+	return allStmts, nil
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Println("Usage: epos <input.epos> [-o output] [-r]")
@@ -45,27 +115,21 @@ func main() {
 		outputFile = "build/" + name
 	}
 
-	// Read Lua code
-	code, err := os.ReadFile(inputFile)
+	// Parse and generate IR with import resolution
+	allStmts, err := parseWithImports(inputFile, make(map[string]bool))
 	if err != nil {
-		fmt.Printf("Error reading file: %v\n", err)
+		fmt.Printf("Error parsing with imports: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Parse and generate IR
-	lexer := parser.NewLexer(string(code))
-	tokens := lexer.Lex()
-	p := parser.NewParser(tokens)
-	stmts := p.Parse()
-
 	tc := parser.NewTypeChecker()
-	if err := tc.TypeCheck(stmts); err != nil {
+	if err := tc.TypeCheck(allStmts); err != nil {
 		fmt.Printf("Type error: %v\n", err)
 		os.Exit(1)
 	}
 
 	cg := codegen.NewCodeGen()
-	m := cg.Generate(stmts)
+	m := cg.Generate(allStmts)
 
 	irStr := m.String()
 	fixed := strings.Replace(irStr, "declare i32 (i8*, ...) @printf()", "declare i32 @printf(i8*, ...)", 1)

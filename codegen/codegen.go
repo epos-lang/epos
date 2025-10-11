@@ -147,7 +147,8 @@ func (cg *CodeGen) instantiateGenericFunction(name string, argTypes []parser.Typ
 	}
 	
 	// Generate the specialized function
-	cg.genFunction(specialized)
+	cg.declareFunctionSignature(specialized)
+	cg.genFunctionBody(specialized)
 	
 	return cg.functions[specializedName]
 }
@@ -527,10 +528,18 @@ func (cg *CodeGen) Generate(stmts []parser.Stmt) *ir.Module {
 	main := cg.module.NewFunc("main", types.I32)
 	entry := main.NewBlock("entry")
 
+	// First pass: declare all function signatures
+	for _, stmt := range stmts {
+		if s, ok := stmt.(*parser.FunctionStmt); ok {
+			cg.declareFunctionSignature(s)
+		}
+	}
+
+	// Second pass: generate function bodies and other statements
 	for _, stmt := range stmts {
 		switch s := stmt.(type) {
 		case *parser.FunctionStmt:
-			cg.genFunction(s)
+			cg.genFunctionBody(s)
 		default:
 			entry = cg.genStmt(entry, stmt, cg.vars)
 		}
@@ -543,7 +552,7 @@ func (cg *CodeGen) Generate(stmts []parser.Stmt) *ir.Module {
 	return cg.module
 }
 
-func (cg *CodeGen) genFunction(s *parser.FunctionStmt) {
+func (cg *CodeGen) declareFunctionSignature(s *parser.FunctionStmt) {
 	// Check if function has generic types - if so, store it for later instantiation
 	for _, p := range s.Params {
 		if cg.hasGenericType(p.Ty) {
@@ -568,9 +577,35 @@ func (cg *CodeGen) genFunction(s *parser.FunctionStmt) {
 	if name == "main" {
 		name = "epos_user_main"
 	}
+	
 	f := cg.module.NewFunc(name, rt, paramList...)
 	cg.functions[s.Name] = f
+}
+
+func (cg *CodeGen) genFunctionBody(s *parser.FunctionStmt) {
+	// Check if this is a generic function
+	for _, p := range s.Params {
+		if cg.hasGenericType(p.Ty) {
+			return // Skip generic functions, they'll be instantiated later
+		}
+	}
+	if s.ReturnType != nil && cg.hasGenericType(s.ReturnType) {
+		return // Skip generic functions, they'll be instantiated later
+	}
+	
+	// Get the already declared function
+	f, ok := cg.functions[s.Name]
+	if !ok {
+		panic(fmt.Sprintf("function %s not declared", s.Name))
+	}
+	
 	entry := f.NewBlock("entry")
+	
+	// Get the return type
+	var rt types.Type = types.Void
+	if s.ReturnType != nil {
+		rt = cg.toLLVMType(s.ReturnType)
+	}
 
 	localVars := make(map[string]varInfo)
 	for i, param := range f.Params {
@@ -601,6 +636,10 @@ func (cg *CodeGen) genFunction(s *parser.FunctionStmt) {
 
 func (cg *CodeGen) genStmt(bb *ir.Block, stmt parser.Stmt, vars map[string]varInfo) *ir.Block {
 	switch s := stmt.(type) {
+	case *parser.ImportStmt:
+		// For now, imports are handled at parse time
+		// In a full implementation, we would link imported modules
+		return bb
 	case *parser.AssignStmt:
 		// Updated for typed variables
 		val, bb := cg.genExpr(bb, s.Expr, vars)

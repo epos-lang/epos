@@ -1,0 +1,24 @@
+# Math module with public and private functions
+
+fn add*(a: int, b: int): int
+    a + b
+end
+
+fn multiply*(a: int, b: int): int
+    a * b
+end
+
+fn divide*(a: int, b: int): int
+    a / b
+end
+
+fn helper_function(x: int): int
+    x * 2
+end
+
+fn power*(base: int, exp: int): int
+  match exp then
+    0 -> 1
+    _ -> base * power(base, exp - 1)
+  end
+end

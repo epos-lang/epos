@@ -2,6 +2,8 @@ package parser
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"unicode"
@@ -16,7 +18,6 @@ const (
 	TokenIdentifier
 	TokenPlus
 	TokenMinus
-	TokenMul
 	TokenDiv
 	TokenAssign
 
@@ -58,6 +59,10 @@ const (
 	TokenSpread
 	TokenInterpolatedString
 	TokenAssert
+	TokenImport
+	TokenFrom
+	TokenAsterisk
+	TokenMul
 )
 
 // Token struct
@@ -106,6 +111,7 @@ type FunctionStmt struct {
 	Params     []Param
 	ReturnType Type
 	Body       []Stmt
+	IsPublic   bool
 }
 
 type CallExpr struct {
@@ -251,6 +257,13 @@ type AssertStmt struct {
 	Type      Type
 }
 
+type ImportStmt struct {
+	Path       string
+	Items      []string  // specific imports like {function1, function2}
+	Alias      string    // for single imports like "import function from ..."
+	IsWildcard bool      // for simple imports like "import ./file.epos"
+}
+
 // Lexer
 type Lexer struct {
 	input  string
@@ -293,7 +306,14 @@ func (l *Lexer) Lex() []Token {
 				l.addToken(TokenMinus, "-")
 			}
 		case ch == '*':
-			l.addToken(TokenMul, "*")
+			// Check if this is a visibility marker in function declaration
+			if len(l.tokens) >= 2 && 
+				l.tokens[len(l.tokens)-1].Type == TokenIdentifier &&
+				l.tokens[len(l.tokens)-2].Type == TokenFunction {
+				l.addToken(TokenAsterisk, "*")
+			} else {
+				l.addToken(TokenMul, "*")
+			}
 		case ch == '/':
 			l.addToken(TokenDiv, "/")
 		case ch == '=':
@@ -567,6 +587,10 @@ func (l *Lexer) lexIdentifier() {
 		l.tokens = append(l.tokens, Token{Type: TokenRecord, Value: id})
 	} else if id == "assert" {
 		l.tokens = append(l.tokens, Token{Type: TokenAssert, Value: id})
+	} else if id == "import" {
+		l.tokens = append(l.tokens, Token{Type: TokenImport, Value: id})
+	} else if id == "from" {
+		l.tokens = append(l.tokens, Token{Type: TokenFrom, Value: id})
 	} else {
 		l.tokens = append(l.tokens, Token{Type: TokenIdentifier, Value: id})
 	}
@@ -592,7 +616,9 @@ func (p *Parser) Parse() []Stmt {
 
 func (p *Parser) parseStmt() Stmt {
 	tok := p.current()
-	if tok.Type == TokenIdentifier && (p.peek().Type == TokenAssign || p.peek().Type == TokenColon) {
+	if tok.Type == TokenImport {
+		return p.parseImport()
+	} else if tok.Type == TokenIdentifier && (p.peek().Type == TokenAssign || p.peek().Type == TokenColon) {
 		return p.parseAssign()
 	} else if tok.Type == TokenFunction {
 		return p.parseFunction()
@@ -634,9 +660,53 @@ func (p *Parser) parseAssign() *AssignStmt {
 	return &AssignStmt{Var: varName, DeclType: declType, Expr: expr}
 }
 
+func (p *Parser) parseImport() *ImportStmt {
+	p.consume(TokenImport)
+	
+	// Handle different import patterns:
+	// import "./file.epos"
+	// import function from "./file.epos"  
+	// import {func1, func2} from "./file.epos"
+	
+	if p.current().Type == TokenString {
+		// Simple wildcard import: import "./file.epos"
+		path := p.consume(TokenString).Value
+		return &ImportStmt{Path: path, IsWildcard: true}
+	} else if p.current().Type == TokenLBrace {
+		// Multi-import: import {func1, func2} from "./file.epos"
+		p.consume(TokenLBrace)
+		var items []string
+		if p.current().Type != TokenRBrace {
+			items = append(items, p.consume(TokenIdentifier).Value)
+			for p.current().Type == TokenComma {
+				p.pos++
+				items = append(items, p.consume(TokenIdentifier).Value)
+			}
+		}
+		p.consume(TokenRBrace)
+		p.consume(TokenFrom)
+		path := p.consume(TokenString).Value
+		return &ImportStmt{Path: path, Items: items}
+	} else {
+		// Single import: import function from "./file.epos"
+		alias := p.consume(TokenIdentifier).Value
+		p.consume(TokenFrom)
+		path := p.consume(TokenString).Value
+		return &ImportStmt{Path: path, Alias: alias}
+	}
+}
+
 func (p *Parser) parseFunction() *FunctionStmt {
 	p.consume(TokenFunction)
+	
 	name := p.consume(TokenIdentifier).Value
+	
+	// Check for public visibility marker after function name
+	isPublic := false
+	if p.current().Type == TokenAsterisk {
+		isPublic = true
+		p.pos++
+	}
 	p.consume(TokenLParen)
 	var params []Param
 	if p.current().Type != TokenRParen {
@@ -689,7 +759,7 @@ func (p *Parser) parseFunction() *FunctionStmt {
 			body[len(body)-1] = &ReturnStmt{Expr: matchExpr}
 		}
 	}
-	return &FunctionStmt{Name: name, Params: params, ReturnType: returnType, Body: body}
+	return &FunctionStmt{Name: name, Params: params, ReturnType: returnType, Body: body, IsPublic: isPublic}
 }
 
 func (p *Parser) parseMatch() *MatchStmt {
@@ -1201,6 +1271,8 @@ func (tc *TypeChecker) TypeCheck(stmts []Stmt) error {
 
 func (tc *TypeChecker) typeCheckStmt(stmt Stmt, env map[string]Type) error {
 	switch s := stmt.(type) {
+	case *ImportStmt:
+		return tc.processImport(s, env)
 	case *FunctionStmt:
 		localEnv := make(map[string]Type)
 		for k, v := range env {
@@ -1942,4 +2014,94 @@ func isComparisonOp(op TokenType) bool {
 	default:
 		return false
 	}
+}
+
+func (tc *TypeChecker) processImport(stmt *ImportStmt, env map[string]Type) error {
+	// Resolve the import path relative to current working directory
+	importPath := stmt.Path
+	if !filepath.IsAbs(importPath) {
+		var err error
+		importPath, err = filepath.Abs(importPath)
+		if err != nil {
+			return fmt.Errorf("failed to resolve import path %s: %v", stmt.Path, err)
+		}
+	}
+
+	// Read the imported file
+	code, err := os.ReadFile(importPath)
+	if err != nil {
+		return fmt.Errorf("failed to read import file %s: %v", importPath, err)
+	}
+
+	// Parse the imported file
+	lexer := NewLexer(string(code))
+	tokens := lexer.Lex()
+	parser := NewParser(tokens)
+	importedStmts := parser.Parse()
+
+	// Type check the imported file with empty environment
+	importTC := NewTypeChecker()
+	importEnv := make(map[string]Type)
+	for _, s := range importedStmts {
+		if err := importTC.typeCheckStmt(s, importEnv); err != nil {
+			return fmt.Errorf("type error in imported file %s: %v", importPath, err)
+		}
+	}
+
+	// Add imported functions to current environment based on import type
+	if stmt.IsWildcard {
+		// Import all public functions
+		for _, s := range importedStmts {
+			if funcStmt, ok := s.(*FunctionStmt); ok && funcStmt.IsPublic {
+				env[funcStmt.Name] = FunctionType{
+					Params: getFunctionParamTypes(funcStmt),
+					Return: funcStmt.ReturnType,
+				}
+			}
+		}
+	} else if len(stmt.Items) > 0 {
+		// Import specific functions
+		for _, item := range stmt.Items {
+			found := false
+			for _, s := range importedStmts {
+				if funcStmt, ok := s.(*FunctionStmt); ok && funcStmt.Name == item {
+					env[item] = FunctionType{
+						Params: getFunctionParamTypes(funcStmt),
+						Return: funcStmt.ReturnType,
+					}
+					found = true
+					break
+				}
+			}
+			if !found {
+				return fmt.Errorf("function %s not found in imported file %s", item, importPath)
+			}
+		}
+	} else if stmt.Alias != "" {
+		// Import single function with alias
+		found := false
+		for _, s := range importedStmts {
+			if funcStmt, ok := s.(*FunctionStmt); ok && funcStmt.Name == stmt.Alias {
+				env[stmt.Alias] = FunctionType{
+					Params: getFunctionParamTypes(funcStmt),
+					Return: funcStmt.ReturnType,
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("function %s not found in imported file %s", stmt.Alias, importPath)
+		}
+	}
+
+	return nil
+}
+
+func getFunctionParamTypes(funcStmt *FunctionStmt) []Type {
+	var paramTypes []Type
+	for _, param := range funcStmt.Params {
+		paramTypes = append(paramTypes, param.Ty)
+	}
+	return paramTypes
 }
