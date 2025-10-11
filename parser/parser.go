@@ -207,6 +207,14 @@ type FunctionType struct {
 	Return Type
 }
 
+type GenericType struct {
+	Name string
+}
+
+func (g GenericType) String() string {
+	return g.Name
+}
+
 type RecordExpr struct {
 	Fields map[string]Expr
 	Type   Type
@@ -886,7 +894,12 @@ func (p *Parser) parsePrimary() Expr {
 		fields := make(map[string]Expr)
 		for p.current().Type != TokenRBrace {
 			field := p.consume(TokenIdentifier).Value
-			p.consume(TokenFatArrow)
+			// Accept both => and : for field assignment
+			if p.current().Type == TokenFatArrow {
+				p.consume(TokenFatArrow)
+			} else {
+				p.consume(TokenColon)
+			}
 			fieldExpr := p.parseExpr()
 			fields[field] = fieldExpr
 			if p.current().Type == TokenComma {
@@ -934,14 +947,29 @@ func (p *Parser) parseType() Type {
 		p.consume(TokenLParen)
 		var params []Type
 		if p.current().Type != TokenRParen {
-			params = append(params, p.parseType())
-			for p.current().Type == TokenComma {
-				p.pos++
+			// Check if this is the new syntax with parameter names
+			if p.peek().Type == TokenColon {
+				// Parse parameter name and type: param_name: type
+				p.consume(TokenIdentifier) // consume parameter name
+				p.consume(TokenColon)
 				params = append(params, p.parseType())
+				for p.current().Type == TokenComma {
+					p.pos++
+					p.consume(TokenIdentifier) // consume parameter name
+					p.consume(TokenColon)
+					params = append(params, p.parseType())
+				}
+			} else {
+				// Old syntax: just types
+				params = append(params, p.parseType())
+				for p.current().Type == TokenComma {
+					p.pos++
+					params = append(params, p.parseType())
+				}
 			}
 		}
 		p.consume(TokenRParen)
-		p.consume(TokenArrow)
+		p.consume(TokenColon)
 		ret := p.parseType()
 		return FunctionType{Params: params, Return: ret}
 	} else {
@@ -959,6 +987,10 @@ func (p *Parser) parseType() Type {
 			p.consume(TokenRParen)
 			return ListType{Element: elem}
 		default:
+			// Check if it's a single lowercase letter (generic type)
+			if len(tok.Value) == 1 && tok.Value[0] >= 'a' && tok.Value[0] <= 'z' {
+				return GenericType{Name: tok.Value}
+			}
 			return BasicType(tok.Value)
 		}
 	}
@@ -1075,6 +1107,9 @@ func (tc *TypeChecker) resolveType(t Type) Type {
 			params[i] = tc.resolveType(ty.Params[i])
 		}
 		return FunctionType{Params: params, Return: tc.resolveType(ty.Return)}
+	case GenericType:
+		// Don't resolve generic types - they should remain as-is
+		return ty
 	default:
 		return t
 	}
@@ -1471,6 +1506,11 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 		if len(e.Args) != len(ft.Params) {
 			return nil, fmt.Errorf("argument count mismatch: expected %d, got %d", len(ft.Params), len(e.Args))
 		}
+		
+		// Handle generic type inference
+		typeMap := make(map[string]Type)
+		instantiatedParams := make([]Type, len(ft.Params))
+		
 		for i, arg := range e.Args {
 			argTy, err := tc.typeCheckExpr(arg, env)
 			if err != nil {
@@ -1479,16 +1519,24 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 			
 			// Resolve empty list/record types to match expected parameter types
 			if isUnresolvedPlaceholder(argTy) {
-				resolveTypes(arg, ft.Params[i])
-				argTy = ft.Params[i]
+				instantiatedParam := tc.instantiateGenericType(ft.Params[i], typeMap)
+				resolveTypes(arg, instantiatedParam)
+				argTy = instantiatedParam
 			}
 			
-			if !tc.equalTypes(argTy, ft.Params[i]) {
-				return nil, fmt.Errorf("argument %d type mismatch: expected %v, got %v", i, ft.Params[i], argTy)
+			// Try to unify the argument type with the parameter type
+			instantiatedParam, err := tc.unifyTypes(ft.Params[i], argTy, typeMap)
+			if err != nil {
+				return nil, fmt.Errorf("argument %d type mismatch: %v", i, err)
 			}
+			instantiatedParams[i] = instantiatedParam
 		}
-		e.Type = ft.Return
-		return ft.Return, nil
+		
+		// Instantiate return type with the inferred type mappings
+		instantiatedReturn := tc.instantiateGenericType(ft.Return, typeMap)
+		
+		e.Type = instantiatedReturn
+		return instantiatedReturn, nil
 	case *ListExpr:
 		if len(e.Elements) == 0 {
 			e.Type = ListType{Element: nil} // Placeholder for empty list
@@ -1683,8 +1731,88 @@ func (tc *TypeChecker) equalTypes(a, b Type) bool {
 			}
 			return tc.equalTypes(a1.Return, b1.Return)
 		}
+	case GenericType:
+		if b1, ok := b.(GenericType); ok {
+			return a1.Name == b1.Name
+		}
 	}
 	return false
+}
+
+// Unify two types, handling generic type variables
+func (tc *TypeChecker) unifyTypes(expected, actual Type, typeMap map[string]Type) (Type, error) {
+	switch expectedType := expected.(type) {
+	case GenericType:
+		// If this generic type is already mapped, check consistency
+		if mapped, exists := typeMap[expectedType.Name]; exists {
+			if tc.equalTypes(mapped, actual) {
+				return actual, nil
+			}
+			return nil, fmt.Errorf("type variable %s already unified to %v, cannot unify with %v", expectedType.Name, mapped, actual)
+		}
+		// Map the generic type to the actual type
+		typeMap[expectedType.Name] = actual
+		return actual, nil
+	case ListType:
+		if actualList, ok := actual.(ListType); ok {
+			unifiedElement, err := tc.unifyTypes(expectedType.Element, actualList.Element, typeMap)
+			if err != nil {
+				return nil, err
+			}
+			return ListType{Element: unifiedElement}, nil
+		}
+		return nil, fmt.Errorf("expected list type, got %v", actual)
+	case FunctionType:
+		if actualFunc, ok := actual.(FunctionType); ok {
+			if len(expectedType.Params) != len(actualFunc.Params) {
+				return nil, fmt.Errorf("function parameter count mismatch")
+			}
+			unifiedParams := make([]Type, len(expectedType.Params))
+			for i := range expectedType.Params {
+				unified, err := tc.unifyTypes(expectedType.Params[i], actualFunc.Params[i], typeMap)
+				if err != nil {
+					return nil, err
+				}
+				unifiedParams[i] = unified
+			}
+			unifiedReturn, err := tc.unifyTypes(expectedType.Return, actualFunc.Return, typeMap)
+			if err != nil {
+				return nil, err
+			}
+			return FunctionType{Params: unifiedParams, Return: unifiedReturn}, nil
+		}
+		return nil, fmt.Errorf("expected function type, got %v", actual)
+	default:
+		// For concrete types, they must match exactly
+		if tc.equalTypes(expected, actual) {
+			return actual, nil
+		}
+		return nil, fmt.Errorf("expected %v, got %v", expected, actual)
+	}
+}
+
+// Instantiate a type by replacing generic type variables with concrete types
+func (tc *TypeChecker) instantiateGenericType(t Type, typeMap map[string]Type) Type {
+	switch typ := t.(type) {
+	case GenericType:
+		if mapped, exists := typeMap[typ.Name]; exists {
+			return mapped
+		}
+		return t // Return unchanged if not mapped
+	case ListType:
+		return ListType{Element: tc.instantiateGenericType(typ.Element, typeMap)}
+	case FunctionType:
+		instantiatedParams := make([]Type, len(typ.Params))
+		for i, param := range typ.Params {
+			instantiatedParams[i] = tc.instantiateGenericType(param, typeMap)
+		}
+		return FunctionType{
+			Params: instantiatedParams,
+			Return: tc.instantiateGenericType(typ.Return, typeMap),
+		}
+	default:
+		return t // Return concrete types unchanged
+	}
 }
 
 func (tc *TypeChecker) compatible(a, b Type) bool {
@@ -1739,6 +1867,9 @@ func (tc *TypeChecker) compatible(a, b Type) bool {
 			}
 		}
 		return tc.compatible(a1.Return, b1.Return)
+	case GenericType:
+		b1, ok := b.(GenericType)
+		return ok && a1.Name == b1.Name
 	default:
 		return false
 	}

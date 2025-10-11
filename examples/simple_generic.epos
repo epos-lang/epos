@@ -1,0 +1,17 @@
+fn identity(x: t): t
+  x
+end
+
+assert identity(5) == 5
+print(identity("hi"))
+print(identity({1, 2, 3}))
+
+record person
+  name: string
+  age: int
+end
+john: person = @{
+  name => "John",
+  age => 30
+}
+print(identity(john))
