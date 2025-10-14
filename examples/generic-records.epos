@@ -1,0 +1,46 @@
+# Test generic record types
+
+record value(t)
+	result: t
+end
+
+record pair(a, b)
+	first: a
+	second: b
+end
+
+fn main(): int
+	# Simple generic record with int
+	value-1: value(int) = @{result => 5}
+	
+	# Generic record with string
+	value-2: value(string) = @{result => "hello"}
+	
+	# Generic record with two type parameters
+	pair-1: pair(int, string) = @{first => 42, second => "world"}
+	
+	# Nested generic records
+	pair-of-values: pair(value(int), value(string)) = @{
+		first => @{result => 100},
+		second => @{result => "nested"}
+	}
+	
+	# Access fields
+	result-1: int = value-1.result
+	result-2: string = value-2.result
+	first-val: int = pair-1.first
+	second-val: string = pair-1.second
+	
+	# Access nested fields
+	nested-first: int = pair-of-values.first.result
+	nested-second: string = pair-of-values.second.result
+	
+  print("result-1: #{result-1}")
+  print("result-2: #{result-2}")
+  print("first-val: #{first-val}")
+  print("second-val: #{second-val}")
+  print("nested-first: #{nested-first}")
+  print("nested-second: #{nested-second}")
+  
+	result-1
+end

@@ -1,0 +1,8 @@
+record value(t)
+	result: t
+end
+
+fn main(): int
+	v: value(int) = @{result => 5}
+	v.result
+end

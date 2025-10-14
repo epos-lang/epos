@@ -1,0 +1,16 @@
+record value(t)
+	result: t
+end
+
+record pair(a, b)
+	first: a
+	second: b
+end
+
+fn main(): int
+	p: pair(value(int), string) = @{
+		first => @{result => 100},
+		second => "world"
+	}
+	p.first.result
+end

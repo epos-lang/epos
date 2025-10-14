@@ -209,6 +209,28 @@ func (cg *CodeGen) substituteGenericType(t parser.Type, typeMap map[string]parse
 			Params: newParams,
 			Return: cg.substituteGenericType(typ.Return, typeMap),
 		}
+	case parser.GenericInstType:
+		newTypeArgs := make([]parser.Type, len(typ.TypeArgs))
+		for i, arg := range typ.TypeArgs {
+			newTypeArgs[i] = cg.substituteGenericType(arg, typeMap)
+		}
+		return parser.GenericInstType{
+			Name:     typ.Name,
+			TypeArgs: newTypeArgs,
+		}
+	case parser.RecordType:
+		newFields := make([]parser.Field, len(typ.Fields))
+		for i, field := range typ.Fields {
+			newFields[i] = parser.Field{
+				Name:     field.Name,
+				Optional: field.Optional,
+				Ty:       cg.substituteGenericType(field.Ty, typeMap),
+			}
+		}
+		return parser.RecordType{
+			Fields:     newFields,
+			TypeParams: typ.TypeParams,
+		}
 	default:
 		return t
 	}

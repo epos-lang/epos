@@ -60,8 +60,6 @@ fn factorial(n: int): int
     false -> n * fact(n - 1)
   end
 end
-# Instead of print use expr (for express)
-expr(factorial(5))
 print(factorial(5))
 
 fn fib(n: int): int
@@ -76,7 +74,7 @@ end
 print(fib(10))
 
 # Arrays
-arr: int[] = [1, 2, 3, 4, 5]
+arr: list(int) = {1, 2, 3, 4, 5}
 # Objects
 type Person_Type
   name: string

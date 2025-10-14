@@ -201,7 +201,8 @@ type Field struct {
 }
 
 type RecordType struct {
-	Fields []Field
+	Fields     []Field
+	TypeParams []string // Generic type parameters like "t" in record value(t)
 }
 
 type FunctionType struct {
@@ -215,6 +216,19 @@ type GenericType struct {
 
 func (g GenericType) String() string {
 	return g.Name
+}
+
+type GenericInstType struct {
+	Name     string   // The generic type name (e.g., "value")
+	TypeArgs []Type   // The concrete types (e.g., [int])
+}
+
+func (g GenericInstType) String() string {
+	args := make([]string, len(g.TypeArgs))
+	for i, arg := range g.TypeArgs {
+		args[i] = fmt.Sprintf("%v", arg)
+	}
+	return g.Name + "(" + strings.Join(args, ", ") + ")"
 }
 
 type RecordExpr struct {
@@ -1033,6 +1047,20 @@ func (p *Parser) parseType() Type {
 			if len(tok.Value) == 1 && tok.Value[0] >= 'a' && tok.Value[0] <= 'z' {
 				return GenericType{Name: tok.Value}
 			}
+			// Check if it's followed by parentheses for generic instantiation
+			if p.current().Type == TokenLParen {
+				p.consume(TokenLParen)
+				var typeArgs []Type
+				if p.current().Type != TokenRParen {
+					typeArgs = append(typeArgs, p.parseType())
+					for p.current().Type == TokenComma {
+						p.consume(TokenComma)
+						typeArgs = append(typeArgs, p.parseType())
+					}
+				}
+				p.consume(TokenRParen)
+				return GenericInstType{Name: tok.Value, TypeArgs: typeArgs}
+			}
 			return BasicType(tok.Value)
 		}
 	}
@@ -1096,6 +1124,21 @@ func (p *Parser) parseListItem() Expr {
 func (p *Parser) parseRecordDecl() *TypeAliasStmt {
 	p.consume(TokenRecord)
 	name := p.consume(TokenIdentifier).Value
+	
+	// Parse optional generic type parameters: record name(T, U, V)
+	var typeParams []string
+	if p.current().Type == TokenLParen {
+		p.consume(TokenLParen)
+		for p.current().Type != TokenRParen {
+			typeParam := p.consume(TokenIdentifier).Value
+			typeParams = append(typeParams, typeParam)
+			if p.current().Type == TokenComma {
+				p.consume(TokenComma)
+			}
+		}
+		p.consume(TokenRParen)
+	}
+	
 	var fields []Field
 	for p.current().Type != TokenEnd {
 		fieldName := p.consume(TokenIdentifier).Value
@@ -1109,7 +1152,7 @@ func (p *Parser) parseRecordDecl() *TypeAliasStmt {
 		fields = append(fields, Field{Name: fieldName, Ty: ty, Optional: optional})
 	}
 	p.consume(TokenEnd)
-	ty := RecordType{Fields: fields}
+	ty := RecordType{Fields: fields, TypeParams: typeParams}
 	return &TypeAliasStmt{Name: name, Ty: ty}
 }
 
@@ -1153,6 +1196,29 @@ func (tc *TypeChecker) resolveType(t Type) Type {
 	case GenericType:
 		// Don't resolve generic types - they should remain as-is
 		return ty
+	case GenericInstType:
+		// Convert GenericInstType to concrete RecordType
+		if genericRecDef, exists := tc.namedTypes[ty.Name]; exists {
+			if recType, ok := genericRecDef.(RecordType); ok && len(recType.TypeParams) > 0 {
+				if len(ty.TypeArgs) == len(recType.TypeParams) {
+					instFields := make([]Field, len(recType.Fields))
+					for i, field := range recType.Fields {
+						instFields[i] = Field{
+							Name:     field.Name,
+							Optional: field.Optional,
+							Ty:       tc.instantiateGenericType(field.Ty, recType.TypeParams, ty.TypeArgs),
+						}
+					}
+					return RecordType{Fields: instFields, TypeParams: nil}
+				}
+			}
+		}
+		// If not a generic record, just resolve the type arguments
+		typeArgs := make([]Type, len(ty.TypeArgs))
+		for i := range ty.TypeArgs {
+			typeArgs[i] = tc.resolveType(ty.TypeArgs[i])
+		}
+		return GenericInstType{Name: ty.Name, TypeArgs: typeArgs}
 	default:
 		return t
 	}
@@ -1294,6 +1360,31 @@ func (tc *TypeChecker) typeCheckStmt(stmt Stmt, env map[string]Type) error {
 		ty = tc.resolveType(ty)
 		if s.DeclType != nil {
 			declType := tc.resolveType(s.DeclType)
+			
+			// Handle generic record instantiation
+			if ginst, ok := declType.(GenericInstType); ok {
+				// Look up the generic record definition
+				if genericRecDef, exists := tc.namedTypes[ginst.Name]; exists {
+					if recType, ok := genericRecDef.(RecordType); ok && len(recType.TypeParams) > 0 {
+						// Create a mapping from generic type parameters to concrete types
+						if len(ginst.TypeArgs) != len(recType.TypeParams) {
+							return fmt.Errorf("wrong number of type arguments: expected %d, got %d", len(recType.TypeParams), len(ginst.TypeArgs))
+						}
+						
+						// Create an instantiated record type
+						instFields := make([]Field, len(recType.Fields))
+						for i, field := range recType.Fields {
+							instFields[i] = Field{
+								Name:     field.Name,
+								Optional: field.Optional,
+								Ty:       tc.instantiateGenericType(field.Ty, recType.TypeParams, ginst.TypeArgs),
+							}
+						}
+						declType = RecordType{Fields: instFields, TypeParams: nil}
+					}
+				}
+			}
+			
 			if !tc.compatible(ty, declType) {
 				return fmt.Errorf("type mismatch: expected %v, got %v", declType, ty)
 			}
@@ -1549,7 +1640,7 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 			
 			// Resolve empty list/record types to match expected parameter types
 			if isUnresolvedPlaceholder(argTy) {
-				instantiatedParam := tc.instantiateGenericType(ft.Params[i], typeMap)
+				instantiatedParam := tc.instantiateWithMap(ft.Params[i], typeMap)
 				resolveTypes(arg, instantiatedParam)
 				argTy = instantiatedParam
 			}
@@ -1563,7 +1654,7 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 		}
 		
 		// Instantiate return type with the inferred type mappings
-		instantiatedReturn := tc.instantiateGenericType(ft.Return, typeMap)
+		instantiatedReturn := tc.instantiateWithMap(ft.Return, typeMap)
 		
 		e.Type = instantiatedReturn
 		return instantiatedReturn, nil
@@ -1738,6 +1829,42 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 	}
 }
 
+func (tc *TypeChecker) instantiateGenericType(ty Type, typeParams []string, typeArgs []Type) Type {
+	switch t := ty.(type) {
+	case GenericType:
+		// Replace generic type parameter with concrete type
+		for i, param := range typeParams {
+			if t.Name == param {
+				return typeArgs[i]
+			}
+		}
+		return t
+	case ListType:
+		return ListType{Element: tc.instantiateGenericType(t.Element, typeParams, typeArgs)}
+	case RecordType:
+		instFields := make([]Field, len(t.Fields))
+		for i, field := range t.Fields {
+			instFields[i] = Field{
+				Name:     field.Name,
+				Optional: field.Optional,
+				Ty:       tc.instantiateGenericType(field.Ty, typeParams, typeArgs),
+			}
+		}
+		return RecordType{Fields: instFields, TypeParams: t.TypeParams}
+	case FunctionType:
+		instParams := make([]Type, len(t.Params))
+		for i, param := range t.Params {
+			instParams[i] = tc.instantiateGenericType(param, typeParams, typeArgs)
+		}
+		return FunctionType{
+			Params: instParams,
+			Return: tc.instantiateGenericType(t.Return, typeParams, typeArgs),
+		}
+	default:
+		return ty
+	}
+}
+
 func (tc *TypeChecker) equalTypes(a, b Type) bool {
 	a = tc.resolveType(a)
 	b = tc.resolveType(b)
@@ -1785,6 +1912,18 @@ func (tc *TypeChecker) equalTypes(a, b Type) bool {
 	case GenericType:
 		if b1, ok := b.(GenericType); ok {
 			return a1.Name == b1.Name
+		}
+	case GenericInstType:
+		if b1, ok := b.(GenericInstType); ok {
+			if a1.Name != b1.Name || len(a1.TypeArgs) != len(b1.TypeArgs) {
+				return false
+			}
+			for i := range a1.TypeArgs {
+				if !tc.equalTypes(a1.TypeArgs[i], b1.TypeArgs[i]) {
+					return false
+				}
+			}
+			return true
 		}
 	}
 	return false
@@ -1879,33 +2018,55 @@ func (tc *TypeChecker) unifyTypes(expected, actual Type, typeMap map[string]Type
 	}
 }
 
-// Instantiate a type by replacing generic type variables with concrete types
-func (tc *TypeChecker) instantiateGenericType(t Type, typeMap map[string]Type) Type {
-	switch typ := t.(type) {
-	case GenericType:
-		if mapped, exists := typeMap[typ.Name]; exists {
-			return mapped
-		}
-		return t // Return unchanged if not mapped
-	case ListType:
-		return ListType{Element: tc.instantiateGenericType(typ.Element, typeMap)}
-	case FunctionType:
-		instantiatedParams := make([]Type, len(typ.Params))
-		for i, param := range typ.Params {
-			instantiatedParams[i] = tc.instantiateGenericType(param, typeMap)
-		}
-		return FunctionType{
-			Params: instantiatedParams,
-			Return: tc.instantiateGenericType(typ.Return, typeMap),
-		}
-	default:
-		return t // Return concrete types unchanged
+func (tc *TypeChecker) instantiateWithMap(t Type, typeMap map[string]Type) Type {
+	typeParams := make([]string, 0, len(typeMap))
+	typeArgs := make([]Type, 0, len(typeMap))
+	for param, arg := range typeMap {
+		typeParams = append(typeParams, param)
+		typeArgs = append(typeArgs, arg)
 	}
+	return tc.instantiateGenericType(t, typeParams, typeArgs)
 }
 
 func (tc *TypeChecker) compatible(a, b Type) bool {
 	a = tc.resolveType(a)
 	b = tc.resolveType(b)
+	
+	// Convert GenericInstType to concrete RecordType for both sides
+	if ginst, ok := a.(GenericInstType); ok {
+		if genericRecDef, exists := tc.namedTypes[ginst.Name]; exists {
+			if recType, ok := genericRecDef.(RecordType); ok && len(recType.TypeParams) > 0 {
+				if len(ginst.TypeArgs) == len(recType.TypeParams) {
+					instFields := make([]Field, len(recType.Fields))
+					for i, field := range recType.Fields {
+						instFields[i] = Field{
+							Name:     field.Name,
+							Optional: field.Optional,
+							Ty:       tc.instantiateGenericType(field.Ty, recType.TypeParams, ginst.TypeArgs),
+						}
+					}
+					a = RecordType{Fields: instFields, TypeParams: nil}
+				}
+			}
+		}
+	}
+	if ginst, ok := b.(GenericInstType); ok {
+		if genericRecDef, exists := tc.namedTypes[ginst.Name]; exists {
+			if recType, ok := genericRecDef.(RecordType); ok && len(recType.TypeParams) > 0 {
+				if len(ginst.TypeArgs) == len(recType.TypeParams) {
+					instFields := make([]Field, len(recType.Fields))
+					for i, field := range recType.Fields {
+						instFields[i] = Field{
+							Name:     field.Name,
+							Optional: field.Optional,
+							Ty:       tc.instantiateGenericType(field.Ty, recType.TypeParams, ginst.TypeArgs),
+						}
+					}
+					b = RecordType{Fields: instFields, TypeParams: nil}
+				}
+			}
+		}
+	}
 	if a == nil {
 		return true
 	}
@@ -1958,6 +2119,7 @@ func (tc *TypeChecker) compatible(a, b Type) bool {
 	case GenericType:
 		b1, ok := b.(GenericType)
 		return ok && a1.Name == b1.Name
+
 	default:
 		return false
 	}

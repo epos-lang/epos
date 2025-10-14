@@ -1,0 +1,9 @@
+record pair(a, b)
+	first: a
+	second: b
+end
+
+fn main(): int
+	p: pair(int, string) = @{first => 42, second => "world"}
+	p.first
+end
