@@ -44,6 +44,8 @@ func (cg *CodeGen) toLLVMType(t parser.Type) types.Type {
 	case parser.BasicType:
 		if ty == "int" {
 			return types.I64
+		} else if ty == "float" {
+			return types.Double
 		} else if ty == "string" || ty == "type" {
 			return types.NewPointer(types.I8)
 		} else if ty == "bool" {
@@ -415,6 +417,8 @@ func (cg *CodeGen) getParserType(expr parser.Expr) parser.Type {
 		return e.Type
 	case *parser.FieldAccessExpr:
 		return e.Type
+	case *parser.FloatExpr:
+		return e.Type
 	default:
 		panic("unknown expr type for getParserType")
 	}
@@ -457,6 +461,12 @@ func (cg *CodeGen) genPrint(bb *ir.Block, val value.Value, pty parser.Type, vars
 			falsePtr.InBounds = true
 			selected := bb.NewSelect(val, truePtr, falsePtr)
 			bb.NewCall(cg.printf, selected)
+		case "float":
+			floatFmt := cg.module.NewGlobalDef(fmt.Sprintf("float_fmt_%d", cg.stringCounter), constant.NewCharArrayFromString("%g"+nl+"\x00"))
+			cg.stringCounter++
+			fmtPtr := bb.NewGetElementPtr(floatFmt.Type().(*types.PointerType).ElemType, floatFmt, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
+			fmtPtr.InBounds = true
+			bb.NewCall(cg.printf, fmtPtr, val)
 		case "string", "type":
 			strFmt := cg.module.NewGlobalDef(fmt.Sprintf("str_fmt_%d", cg.stringCounter), constant.NewCharArrayFromString("%s"+nl+"\x00"))
 			cg.stringCounter++
@@ -846,6 +856,8 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 	switch e := expr.(type) {
 	case *parser.NumberExpr:
 		return constant.NewInt(types.I64, e.Value), bb
+	case *parser.FloatExpr:
+		return constant.NewFloat(types.Double, e.Value), bb
 	case *parser.BoolExpr:
 		return constant.NewBool(e.Value), bb
 	case *parser.StringExpr:
@@ -884,9 +896,14 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 		panic("undefined: " + e.Name)
 	case *parser.UnaryExpr:
 		if e.Op == parser.TokenMinus {
-			zero := constant.NewInt(types.I64, 0)
 			operand, bb := cg.genExpr(bb, e.Expr, vars)
-			return bb.NewSub(zero, operand), bb
+			if operand.Type() == types.Double {
+				zero := constant.NewFloat(types.Double, 0.0)
+				return bb.NewFSub(zero, operand), bb
+			} else {
+				zero := constant.NewInt(types.I64, 0)
+				return bb.NewSub(zero, operand), bb
+			}
 		}
 		panic("unknown unary operator")
 		return nil, bb
@@ -907,7 +924,33 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 			default:
 				panic("unknown integer operator")
 			}
+		} else if e.Type == parser.BasicType("float") {
+			switch e.Op {
+			case parser.TokenPlus:
+				return bb.NewFAdd(left, right), bb
+			case parser.TokenMinus:
+				return bb.NewFSub(left, right), bb
+			case parser.TokenMul:
+				return bb.NewFMul(left, right), bb
+			case parser.TokenDiv:
+				return bb.NewFDiv(left, right), bb
+			default:
+				panic("unknown float operator")
+			}
 		} else if e.Type == parser.BasicType("bool") {
+			// Handle comparisons - check if operands are floats
+			if left.Type() == types.Double || right.Type() == types.Double {
+				var pred enum.FPred
+				switch e.Op {
+				case parser.TokenGT:
+					pred = enum.FPredOGT
+				case parser.TokenLT:
+					pred = enum.FPredOLT
+				case parser.TokenEQ:
+					pred = enum.FPredOEQ
+				}
+				return bb.NewFCmp(pred, left, right), bb
+			}
 			var pred enum.IPred
 			switch e.Op {
 			case parser.TokenGT:

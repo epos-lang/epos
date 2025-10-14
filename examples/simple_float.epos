@@ -1,0 +1,5 @@
+# Simple float test
+pi = 3.14159
+radius = 5.0
+area = pi * radius * radius
+print(area)

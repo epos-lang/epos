@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"unicode"
 )
 
@@ -44,6 +45,7 @@ const (
 	TokenTypeString
 	TokenTypeList
 	TokenTypeBool
+	TokenTypeFloat
 	TokenLBrace
 	TokenRBrace
 	TokenRecord
@@ -73,6 +75,11 @@ type Expr interface{}
 
 type NumberExpr struct {
 	Value int64
+	Type  Type
+}
+
+type FloatExpr struct {
+	Value float64
 	Type  Type
 }
 
@@ -537,11 +544,30 @@ func (l *Lexer) lexInterpolatedString(delimiter byte) {
 
 func (l *Lexer) lexNumber() {
 	start := l.pos
+	hasDecimal := false
+	
+	// Parse digits
 	for l.pos < len(l.input) && unicode.IsDigit(rune(l.input[l.pos])) {
 		l.pos++
 	}
+	
+	// Check for decimal point
+	if l.pos < len(l.input) && l.input[l.pos] == '.' {
+		hasDecimal = true
+		l.pos++ // consume the '.'
+		
+		// Parse fractional part
+		for l.pos < len(l.input) && unicode.IsDigit(rune(l.input[l.pos])) {
+			l.pos++
+		}
+	}
+	
 	numStr := l.input[start:l.pos]
-	l.tokens = append(l.tokens, Token{Type: TokenNumber, Value: numStr})
+	if hasDecimal {
+		l.tokens = append(l.tokens, Token{Type: TokenNumber, Value: numStr})
+	} else {
+		l.tokens = append(l.tokens, Token{Type: TokenNumber, Value: numStr})
+	}
 }
 
 func (l *Lexer) peekChar() byte {
@@ -863,8 +889,14 @@ func (p *Parser) parsePrimary() Expr {
 		expr = &MatchExpr{Expr: matchExpr, Cases: cases, Default: defaultExpr}
 	case TokenNumber:
 		p.pos++
-		val, _ := strconv.ParseInt(tok.Value, 10, 64)
-		expr = &NumberExpr{Value: val}
+		// Check if it's a float (contains a decimal point)
+		if strings.Contains(tok.Value, ".") {
+			val, _ := strconv.ParseFloat(tok.Value, 64)
+			expr = &FloatExpr{Value: val}
+		} else {
+			val, _ := strconv.ParseInt(tok.Value, 10, 64)
+			expr = &NumberExpr{Value: val}
+		}
 	case TokenString:
 		p.pos++
 		expr = &StringExpr{Value: tok.Value}
@@ -978,6 +1010,8 @@ func (p *Parser) parseType() Type {
 			return BasicType("string")
 		case "bool":
 			return BasicType("bool")
+		case "float":
+			return BasicType("float")
 		case "list":
 			p.consume(TokenLParen)
 			elem := p.parseType()
@@ -1311,6 +1345,10 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 		ty := BasicType("int")
 		e.Type = ty
 		return ty, nil
+	case *FloatExpr:
+		ty := BasicType("float")
+		e.Type = ty
+		return ty, nil
 	case *BoolExpr:
 		ty := BasicType("bool")
 		e.Type = ty
@@ -1350,11 +1388,11 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 		if err != nil {
 			return nil, err
 		}
-		if ty != BasicType("int") {
-			return nil, fmt.Errorf("unary operator on non-int")
+		if ty != BasicType("int") && ty != BasicType("float") {
+			return nil, fmt.Errorf("unary operator requires numeric type")
 		}
-		e.Type = BasicType("int")
-		return BasicType("int"), nil
+		e.Type = ty
+		return ty, nil
 	case *BinaryExpr:
 		leftTy, err := tc.typeCheckExpr(e.Left, env)
 		if err != nil {
@@ -1369,6 +1407,9 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 			if leftTy == BasicType("int") && isNumberOp(e.Op) {
 				e.Type = BasicType("int")
 				return BasicType("int"), nil
+			} else if leftTy == BasicType("float") && isNumberOp(e.Op) {
+				e.Type = BasicType("float")
+				return BasicType("float"), nil
 			} else if isComparisonOp(e.Op) {
 				e.Type = BasicType("bool")
 				return BasicType("bool"), nil

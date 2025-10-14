@@ -22,9 +22,9 @@
 - [x] Make `type` a keyword (example: `type new_type = int`)
 - [x] Remove `if`/`while`/`return` statements
 - [x] Make variables immutable
-- [ ] Change multi-line comments to use `(#`/`#)`
 - [x] Add piping operator (`|>`)
-- [.] Add float type
+- [x] Add float type
+- [ ] Change multi-line comments to use `(#`/`#)`
 - [.] Add function param default value (`fn test-fn(a: int = 1)`)
 - [ ] Add function overloading (example: `fn add(x: int, y: int): int\n\t x + y\n end\n fn add(x: int, y: int, z: int): int\n\t x + y + z\n end\n add(1, 2)\n add(1, 2, 3)`)
 - [!] Add builtin functions for file reading/writing
