@@ -120,7 +120,6 @@ func (cg *CodeGen) instantiateGenericFunction(name string, argTypes []parser.Typ
 	typeMap := make(map[string]parser.Type)
 	for i, param := range genericFunc.Params {
 		if i < len(argTypes) {
-	
 			cg.mapGenericTypes(param.Ty, argTypes[i], typeMap)
 		}
 	}
@@ -317,8 +316,25 @@ func (cg *CodeGen) substituteGenericTypesInExpr(expr parser.Expr, typeMap map[st
 		for i, arg := range e.Args {
 			newArgs[i] = cg.substituteGenericTypesInExpr(arg, typeMap)
 		}
+		newCallee := cg.substituteGenericTypesInExpr(e.Callee, typeMap)
+		
+		// Handle recursive calls to generic functions - rewrite the function name
+		if varExpr, ok := e.Callee.(*parser.VarExpr); ok {
+			if _, isGeneric := cg.genericFunctions[varExpr.Name]; isGeneric {
+				// This is a call to a generic function, create the specialized name
+				specializedName := varExpr.Name
+				for _, concreteType := range typeMap {
+					specializedName += "_" + cg.typeToString(concreteType)
+				}
+				newCallee = &parser.VarExpr{
+					Name: specializedName,
+					Type: cg.substituteGenericType(varExpr.Type, typeMap),
+				}
+			}
+		}
+		
 		return &parser.CallExpr{
-			Callee: cg.substituteGenericTypesInExpr(e.Callee, typeMap),
+			Callee: newCallee,
 			Args:   newArgs,
 			Type:   cg.substituteGenericType(e.Type, typeMap),
 		}
@@ -343,6 +359,28 @@ func (cg *CodeGen) substituteGenericTypesInExpr(expr parser.Expr, typeMap map[st
 	case *parser.SpreadExpr:
 		return &parser.SpreadExpr{
 			Expr: cg.substituteGenericTypesInExpr(e.Expr, typeMap),
+		}
+	case *parser.MatchExpr:
+		newCases := make([]parser.MatchCaseExpr, len(e.Cases))
+		for i, matchCase := range e.Cases {
+			newValues := make([]parser.Expr, len(matchCase.Values))
+			for j, val := range matchCase.Values {
+				newValues[j] = cg.substituteGenericTypesInExpr(val, typeMap)
+			}
+			newCases[i] = parser.MatchCaseExpr{
+				Values: newValues,
+				Body:   cg.substituteGenericTypesInExpr(matchCase.Body, typeMap),
+			}
+		}
+		var newDefault parser.Expr
+		if e.Default != nil {
+			newDefault = cg.substituteGenericTypesInExpr(e.Default, typeMap)
+		}
+		return &parser.MatchExpr{
+			Expr:    cg.substituteGenericTypesInExpr(e.Expr, typeMap),
+			Cases:   newCases,
+			Default: newDefault,
+			Type:    cg.substituteGenericType(e.Type, typeMap),
 		}
 	default:
 		return expr // Return as-is for other expression types

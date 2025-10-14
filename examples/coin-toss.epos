@@ -1,0 +1,40 @@
+# Gets the head and tail of a list
+# Example:
+#   heads-and-tails: coin-toss-type = coin-toss({1, 2, 3, 4})
+#   print(heads-and-tails.head) #=> 1
+#   print(heads-and-tails.tail) #=> {2, 3, 4}
+
+fn head(lst: list(t)): t
+  elem(lst, 0)
+end
+
+fn tail(lst: list(t), index: int = 1): list(t)
+  empty-list: list(t) = {}
+  result: list(t) = match index then
+    len(lst) -> empty-list
+    _ -> {elem(lst, index), ..tail(lst, index + 1)}
+  end
+  result
+end
+
+# TODO: Add support for public records
+#record coin-toss-type*(t)
+#[record coin-toss-type(t)
+  head: t
+  tail: list(t)
+end
+
+fn coin-toss(lst: list(t)): coin-toss-type(t)
+  result: coin-toss-type(t) = @{
+    head: head(lst),
+    tail: tail(lst)
+  }
+  result
+end]#
+
+# testing
+#print(coin-toss({1, 2, 3, 4}))
+print(tail({1, 2, 3, 4}))
+#heads-and-tails: coin-toss-type(int) = coin-toss({1, 2, 3, 4})
+#print(heads-and-tails.head) #=> 1
+#print(heads-and-tails.tail) #=> {2, 3, 4}
