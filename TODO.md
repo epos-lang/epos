@@ -29,7 +29,7 @@
 - [x] Add ranges (example: `1..5 #=> {1, 2, 3, 4, 5}`)
 - [x] Add `and`/`or` keywords
 - [x] Add `error` builtin function
-- [!] Add builtin functions for file reading/writing
+- [x] Add builtin functions for file reading/writing
   - Example (write file): `file: file-type = open-file("text.txt")
     write-file(file, "Hello World!")
     close-file(file)`

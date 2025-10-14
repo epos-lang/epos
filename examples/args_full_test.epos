@@ -1,0 +1,11 @@
+# Test command line arguments - full version
+fn main()
+    arguments: list(string) = args()
+    count: int = len(arguments)
+    print("Argument count:")
+    print(count)
+    
+    # Print each argument
+    print("Arguments:")
+    print(arguments)
+end

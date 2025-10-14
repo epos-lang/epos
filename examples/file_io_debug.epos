@@ -1,0 +1,18 @@
+# Test file I/O functionality with debug output
+fn main()
+    print("Creating and writing to file...")
+    # Create and write to a file
+    file: file-type = open-file("debug.txt")
+    write-result: int = write-file(file, "Hello Debug World!")
+    print("Write result:")
+    print(write-result)
+    close-file(file)
+    
+    print("Reading from file...")
+    # Read from the file
+    file2: file-type = open-file("debug.txt")
+    text: string = read-file(file2)
+    print("Read text:")
+    print(text)
+    close-file(file2)
+end

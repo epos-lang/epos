@@ -69,6 +69,7 @@ const (
 	TokenNeq
 	TokenAnd
 	TokenOr
+	TokenTypeFile
 )
 
 // Token struct
@@ -109,6 +110,13 @@ type UnaryExpr struct {
 }
 
 type Stmt interface{}
+
+type LambdaExpr struct {
+	Params []Param
+	ReturnType Type
+	Body Expr
+	Type Type
+}
 
 type AssignStmt struct {
 	Var      string
@@ -659,6 +667,8 @@ func (l *Lexer) lexIdentifier() {
 		l.tokens = append(l.tokens, Token{Type: TokenAnd, Value: id})
 	} else if id == "or" {
 		l.tokens = append(l.tokens, Token{Type: TokenOr, Value: id})
+	} else if id == "file-type" {
+		l.tokens = append(l.tokens, Token{Type: TokenTypeFile, Value: id})
 	} else {
 		l.tokens = append(l.tokens, Token{Type: TokenIdentifier, Value: id})
 	}
@@ -969,6 +979,40 @@ func (p *Parser) parsePrimary() Expr {
 	tok := p.current()
 	var expr Expr
 	switch tok.Type {
+	case TokenFunction:
+		// Lambda expression: fn(params): return_type => body
+		p.pos++
+		p.consume(TokenLParen)
+		var params []Param
+		if p.current().Type != TokenRParen {
+			paramName := p.consume(TokenIdentifier).Value
+			p.consume(TokenColon)
+			paramType := p.parseType()
+			params = append(params, Param{Name: paramName, Ty: paramType})
+			for p.current().Type == TokenComma {
+				p.pos++
+				paramName := p.consume(TokenIdentifier).Value
+				p.consume(TokenColon)
+				paramType := p.parseType()
+				params = append(params, Param{Name: paramName, Ty: paramType})
+			}
+		}
+		p.consume(TokenRParen)
+		
+		var returnType Type = BasicType("void")
+		if p.current().Type == TokenColon {
+			p.pos++
+			returnType = p.parseType()
+		}
+		
+		p.consume(TokenFatArrow)
+		body := p.parseExpr()
+		
+		expr = &LambdaExpr{
+			Params: params,
+			ReturnType: returnType,
+			Body: body,
+		}
 	case TokenMatch:
 		p.pos++
 		matchExpr := p.parseExpr()
@@ -1121,7 +1165,12 @@ func (p *Parser) parseType() Type {
 		}
 		return FunctionType{Params: params, Return: ret}
 	} else {
-		tok := p.consume(TokenIdentifier)
+		tok := p.current()
+		if tok.Type == TokenTypeFile {
+			p.pos++
+			return BasicType("file")
+		}
+		tok = p.consume(TokenIdentifier)
 		switch tok.Value {
 		case "int":
 			return BasicType("int")
@@ -1131,6 +1180,8 @@ func (p *Parser) parseType() Type {
 			return BasicType("bool")
 		case "float":
 			return BasicType("float")
+		case "file-type":
+			return BasicType("file")
 		case "void":
 			return BasicType("void")
 		case "list":
@@ -1729,6 +1780,71 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 					return BasicType("int"), nil
 				}
 				return nil, fmt.Errorf("len called on non-list")
+			} else if ve.Name == "open-file" {
+				if len(e.Args) != 1 {
+					return nil, fmt.Errorf("open-file takes one argument")
+				}
+				argTy, err := tc.typeCheckExpr(e.Args[0], env)
+				if err != nil {
+					return nil, err
+				}
+				if argTy != BasicType("string") {
+					return nil, fmt.Errorf("open-file requires a string argument")
+				}
+				e.Type = BasicType("file")
+				return BasicType("file"), nil
+			} else if ve.Name == "write-file" {
+				if len(e.Args) != 2 {
+					return nil, fmt.Errorf("write-file takes two arguments")
+				}
+				fileTy, err := tc.typeCheckExpr(e.Args[0], env)
+				if err != nil {
+					return nil, err
+				}
+				contentTy, err := tc.typeCheckExpr(e.Args[1], env)
+				if err != nil {
+					return nil, err
+				}
+				if fileTy != BasicType("file") {
+					return nil, fmt.Errorf("write-file requires a file as first argument")
+				}
+				if contentTy != BasicType("string") {
+					return nil, fmt.Errorf("write-file requires a string as second argument")
+				}
+				e.Type = BasicType("int")
+				return BasicType("int"), nil
+			} else if ve.Name == "read-file" {
+				if len(e.Args) != 1 {
+					return nil, fmt.Errorf("read-file takes one argument")
+				}
+				argTy, err := tc.typeCheckExpr(e.Args[0], env)
+				if err != nil {
+					return nil, err
+				}
+				if argTy != BasicType("file") {
+					return nil, fmt.Errorf("read-file requires a file argument")
+				}
+				e.Type = BasicType("string")
+				return BasicType("string"), nil
+			} else if ve.Name == "close-file" {
+				if len(e.Args) != 1 {
+					return nil, fmt.Errorf("close-file takes one argument")
+				}
+				argTy, err := tc.typeCheckExpr(e.Args[0], env)
+				if err != nil {
+					return nil, err
+				}
+				if argTy != BasicType("file") {
+					return nil, fmt.Errorf("close-file requires a file argument")
+				}
+				e.Type = BasicType("int")
+				return BasicType("int"), nil
+			} else if ve.Name == "args" {
+				if len(e.Args) != 0 {
+					return nil, fmt.Errorf("args takes no arguments")
+				}
+				e.Type = ListType{Element: BasicType("string")}
+				return ListType{Element: BasicType("string")}, nil
 			}
 		}
 		calleeTy, err := tc.typeCheckExpr(e.Callee, env)
@@ -1966,6 +2082,43 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 		} else {
 			return nil, fmt.Errorf("right side of pipe must be a function call")
 		}
+	case *LambdaExpr:
+		// Create local environment for lambda parameters
+		lambdaEnv := make(map[string]Type)
+		for k, v := range env {
+			lambdaEnv[k] = v
+		}
+		
+		// Add parameters to lambda environment
+		var paramTypes []Type
+		for _, param := range e.Params {
+			paramTypes = append(paramTypes, param.Ty)
+			lambdaEnv[param.Name] = param.Ty
+		}
+		
+		// Type check lambda body
+		bodyTy, err := tc.typeCheckExpr(e.Body, lambdaEnv)
+		if err != nil {
+			return nil, err
+		}
+		
+		// Check if body type matches return type
+		if e.ReturnType != nil && !tc.equalTypes(bodyTy, e.ReturnType) {
+			return nil, fmt.Errorf("lambda body type %v does not match declared return type %v", bodyTy, e.ReturnType)
+		}
+		
+		// If no return type declared, infer from body
+		if e.ReturnType == nil {
+			e.ReturnType = bodyTy
+		}
+		
+		// Create function type for lambda
+		funcTy := FunctionType{
+			Params: paramTypes,
+			Return: e.ReturnType,
+		}
+		e.Type = funcTy
+		return funcTy, nil
 	default:
 		return nil, fmt.Errorf("unsupported expression type")
 	}

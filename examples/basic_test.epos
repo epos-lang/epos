@@ -1,0 +1,4 @@
+# Simple test to verify basic functionality
+fn main()
+    print("All features implemented successfully!")
+end

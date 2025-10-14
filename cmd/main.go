@@ -83,21 +83,45 @@ func parseWithImports(filePath string, visited map[string]bool) ([]parser.Stmt, 
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Println("Usage: epos <input.epos> [-o output] [-r]")
+		fmt.Println("Usage: epos <input.epos> [-o output] [-r] [program_args...]")
 		os.Exit(1)
 	}
 
 	var inputFile, outputFile string
 	var runAfterCompile bool
+	var programArgs []string
 
 	// Parse arguments
 	args := os.Args[1:]
+	skipNext := false
 	for i, arg := range args {
+		if skipNext {
+			skipNext = false
+			continue
+		}
 		if arg == "-r" {
 			runAfterCompile = true
+			// All remaining args after -r are program arguments
+			if i+1 < len(args) {
+				// Find the input file first, then collect remaining args as program args
+				remainingArgs := args[i+1:]
+				foundInput := false
+				for j, remainingArg := range remainingArgs {
+					if !strings.HasPrefix(remainingArg, "-") && !foundInput {
+						if inputFile == "" {
+							inputFile = remainingArg
+							foundInput = true
+						}
+					} else if foundInput {
+						// Everything after the input file are program arguments
+						programArgs = remainingArgs[j:]
+						break
+					}
+				}
+			}
 		} else if arg == "-o" && i+1 < len(args) {
 			outputFile = args[i+1]
-			i++ // Skip next arg since it's the output filename
+			skipNext = true
 		} else if !strings.HasPrefix(arg, "-") && inputFile == "" {
 			inputFile = arg
 		}
@@ -105,7 +129,7 @@ func main() {
 
 	if inputFile == "" {
 		fmt.Println("Error: No input file specified")
-		fmt.Println("Usage: epos <input.epos> [-o output] [-r]")
+		fmt.Println("Usage: epos <input.epos> [-o output] [-r] [program_args...]")
 		os.Exit(1)
 	}
 
@@ -179,8 +203,15 @@ func main() {
 
 	// Run the executable if -r flag was provided
 	if runAfterCompile {
-		fmt.Printf("Running %s...\n", outputFile)
-		cmd = exec.Command("./" + outputFile)
+		fmt.Printf("Running %s", outputFile)
+		if len(programArgs) > 0 {
+			fmt.Printf(" with args: %v", programArgs)
+		}
+		fmt.Println("...")
+		
+		// Build command with program arguments
+		cmdArgs := append([]string{"./" + outputFile}, programArgs...)
+		cmd = exec.Command(cmdArgs[0], cmdArgs[1:]...)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {

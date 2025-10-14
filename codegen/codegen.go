@@ -27,10 +27,14 @@ type CodeGen struct {
 	assertCounter                          int
 	listPrintCounter                       int
 	recordPrintCounter                     int
+	fileCounter                            int
 	strlen, strcpy, strcat, malloc, memcpy, strcmp, memcmp, sprintf, exit *ir.Func
+	fopen, fclose, fread, fwrite, fgets, fputs, fflush *ir.Func
 	intFmt                                 *ir.Global
 	intToStringCounter                     int
 	assertFailMsg                          *ir.Global
+	globalArgc                             *ir.Global
+	globalArgv                             *ir.Global
 }
 
 type varInfo struct {
@@ -51,6 +55,8 @@ func (cg *CodeGen) toLLVMType(t parser.Type) types.Type {
 			return types.I1
 		} else if ty == "void" {
 			return types.Void
+		} else if ty == "file" {
+			return types.NewPointer(types.I8) // FILE* pointer
 		}
 	case parser.FunctionType:
 		var paramTypes []types.Type
@@ -479,9 +485,23 @@ func NewCodeGen() *CodeGen {
 	sprintf := m.NewFunc("sprintf", types.I32, ir.NewParam("", types.NewPointer(types.I8)), ir.NewParam("", types.NewPointer(types.I8)))
 	sprintf.Sig.Variadic = true
 	exit := m.NewFunc("exit", types.Void, ir.NewParam("", types.I32))
+	
+	// File I/O functions
+	fopen := m.NewFunc("fopen", types.NewPointer(types.I8), ir.NewParam("filename", types.NewPointer(types.I8)), ir.NewParam("mode", types.NewPointer(types.I8)))
+	fclose := m.NewFunc("fclose", types.I32, ir.NewParam("stream", types.NewPointer(types.I8)))
+	fread := m.NewFunc("fread", types.I64, ir.NewParam("buffer", types.NewPointer(types.I8)), ir.NewParam("size", types.I64), ir.NewParam("count", types.I64), ir.NewParam("stream", types.NewPointer(types.I8)))
+	fwrite := m.NewFunc("fwrite", types.I64, ir.NewParam("buffer", types.NewPointer(types.I8)), ir.NewParam("size", types.I64), ir.NewParam("count", types.I64), ir.NewParam("stream", types.NewPointer(types.I8)))
+	fgets := m.NewFunc("fgets", types.NewPointer(types.I8), ir.NewParam("str", types.NewPointer(types.I8)), ir.NewParam("n", types.I32), ir.NewParam("stream", types.NewPointer(types.I8)))
+	fputs := m.NewFunc("fputs", types.I32, ir.NewParam("str", types.NewPointer(types.I8)), ir.NewParam("stream", types.NewPointer(types.I8)))
+	fflush := m.NewFunc("fflush", types.I32, ir.NewParam("stream", types.NewPointer(types.I8)))
+	
 	assertFailMsg := m.NewGlobalDef("assert_fail_msg", constant.NewCharArrayFromString("Assertion failed\n\x00"))
+	
+	// Global variables for command line arguments
+	globalArgc := m.NewGlobalDef("global_argc", constant.NewInt(types.I32, 0))
+	globalArgv := m.NewGlobalDef("global_argv", constant.NewNull(types.NewPointer(types.NewPointer(types.I8))))
 
-	return &CodeGen{module: m, vars: make(map[string]varInfo), functions: make(map[string]*ir.Func), functionDefinitions: make(map[string]*parser.FunctionStmt), genericFunctions: make(map[string]*parser.FunctionStmt), printf: printf, globalFmt: globalFmt, strFmt: strFmt, matchCounter: 0, stringCounter: 0, listPrintCounter: 0, recordPrintCounter: 0, intToStringCounter: 0, strlen: strlen, strcpy: strcpy, strcat: strcat, malloc: malloc, memcpy: memcpy, strcmp: strcmp, memcmp: memcmp, sprintf: sprintf, exit: exit, assertFailMsg: assertFailMsg}
+	return &CodeGen{module: m, vars: make(map[string]varInfo), functions: make(map[string]*ir.Func), functionDefinitions: make(map[string]*parser.FunctionStmt), genericFunctions: make(map[string]*parser.FunctionStmt), printf: printf, globalFmt: globalFmt, strFmt: strFmt, matchCounter: 0, stringCounter: 0, listPrintCounter: 0, recordPrintCounter: 0, fileCounter: 0, intToStringCounter: 0, strlen: strlen, strcpy: strcpy, strcat: strcat, malloc: malloc, memcpy: memcpy, strcmp: strcmp, memcmp: memcmp, sprintf: sprintf, exit: exit, fopen: fopen, fclose: fclose, fread: fread, fwrite: fwrite, fgets: fgets, fputs: fputs, fflush: fflush, assertFailMsg: assertFailMsg, globalArgc: globalArgc, globalArgv: globalArgv}
 }
 
 func (cg *CodeGen) getParserType(expr parser.Expr) parser.Type {
@@ -513,6 +533,8 @@ func (cg *CodeGen) getParserType(expr parser.Expr) parser.Type {
 	case *parser.FloatExpr:
 		return e.Type
 	case *parser.RangeExpr:
+		return e.Type
+	case *parser.LambdaExpr:
 		return e.Type
 	default:
 		panic("unknown expr type for getParserType")
@@ -710,8 +732,15 @@ func (cg *CodeGen) genPrint(bb *ir.Block, val value.Value, pty parser.Type, vars
 
 // Generate generates LLVM IR for the given statements
 func (cg *CodeGen) Generate(stmts []parser.Stmt) *ir.Module {
-	main := cg.module.NewFunc("main", types.I32)
+	// Create main function that accepts argc, argv
+	main := cg.module.NewFunc("main", types.I32, 
+		ir.NewParam("argc", types.I32), 
+		ir.NewParam("argv", types.NewPointer(types.NewPointer(types.I8))))
 	entry := main.NewBlock("entry")
+	
+	// Store argc and argv in global variables for args() function
+	entry.NewStore(main.Params[0], cg.globalArgc)
+	entry.NewStore(main.Params[1], cg.globalArgv)
 
 	// First pass: declare all function signatures
 	for _, stmt := range stmts {
@@ -1212,6 +1241,199 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 					result := cg.genCompare(bb, left, right, pty)
 					return result, bb
 				}
+			} else if calleeName == "open-file" {
+			filename, bb := cg.genExpr(bb, e.Args[0], vars)
+			
+			// Create mode string for reading and writing ("r+") 
+			// Note: This will fail if file doesn't exist, which is handled below
+			modeStr := constant.NewCharArrayFromString("r+\x00")
+			cg.stringCounter++
+			modeGlobal := cg.module.NewGlobalDef(fmt.Sprintf("open_mode_%d", cg.stringCounter), modeStr)
+			elemTy := modeGlobal.Type().(*types.PointerType).ElemType
+			modePtr := bb.NewGetElementPtr(elemTy, modeGlobal, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
+			modePtr.InBounds = true
+			
+			filePtr := bb.NewCall(cg.fopen, filename, modePtr)
+			
+			// Check if fopen failed (file doesn't exist), try to create with "w+"
+			nullPtr := constant.NewNull(filePtr.Type().(*types.PointerType))
+			isNull := bb.NewICmp(enum.IPredEQ, filePtr, nullPtr)
+			
+			// Create blocks for handling file creation
+			cg.fileCounter++
+			id := cg.fileCounter
+			tryCreateBB := bb.Parent.NewBlock(fmt.Sprintf("try_create_%d", id))
+			successBB := bb.Parent.NewBlock(fmt.Sprintf("open_success_%d", id))
+			failBB := bb.Parent.NewBlock(fmt.Sprintf("open_fail_%d", id))
+			
+			bb.NewCondBr(isNull, tryCreateBB, successBB)
+			
+			// Try to create the file with "w+" mode
+			createModeStr := constant.NewCharArrayFromString("w+\x00")
+			cg.stringCounter++
+			createModeGlobal := cg.module.NewGlobalDef(fmt.Sprintf("create_mode_%d", cg.stringCounter), createModeStr)
+			createElemTy := createModeGlobal.Type().(*types.PointerType).ElemType
+			createModePtr := tryCreateBB.NewGetElementPtr(createElemTy, createModeGlobal, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
+			createModePtr.InBounds = true
+			
+			filePtr2 := tryCreateBB.NewCall(cg.fopen, filename, createModePtr)
+			isNull2 := tryCreateBB.NewICmp(enum.IPredEQ, filePtr2, nullPtr)
+			tryCreateBB.NewCondBr(isNull2, failBB, successBB)
+			
+			// Failure case: print error and exit (no return needed)
+			failMsg := cg.module.NewGlobalDef(fmt.Sprintf("file_fail_msg_%d", cg.stringCounter), constant.NewCharArrayFromString("Error: Failed to open file\n\x00"))
+			cg.stringCounter++
+			failPtr := failBB.NewGetElementPtr(failMsg.Type().(*types.PointerType).ElemType, failMsg, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
+			failPtr.InBounds = true
+			failBB.NewCall(cg.printf, failPtr)
+			failBB.NewCall(cg.exit, constant.NewInt(types.I32, 1))
+			failBB.NewUnreachable()
+			
+			// Success case: return the appropriate file pointer
+			phi := successBB.NewPhi(ir.NewIncoming(filePtr, bb), ir.NewIncoming(filePtr2, tryCreateBB))
+			return phi, successBB
+			} else if calleeName == "write-file" {
+			filePtr, bb := cg.genExpr(bb, e.Args[0], vars)
+			content, bb := cg.genExpr(bb, e.Args[1], vars)
+			
+			// fputs returns EOF (-1) on error, or a non-negative value on success
+			result := bb.NewCall(cg.fputs, content, filePtr)
+			// Flush the buffer to ensure write is complete
+			bb.NewCall(cg.fflush, filePtr)
+			// Convert to int64 for consistency
+			extResult := bb.NewSExt(result, types.I64)
+			return extResult, bb
+			} else if calleeName == "read-file" {
+			filePtr, bb := cg.genExpr(bb, e.Args[0], vars)
+			
+			// First, rewind the file to the beginning for reading
+			rewind := cg.module.NewFunc("rewind", types.Void, ir.NewParam("stream", types.NewPointer(types.I8)))
+			bb.NewCall(rewind, filePtr)
+			
+			// Get file size using fseek/ftell
+			fseek := cg.module.NewFunc("fseek", types.I32, ir.NewParam("stream", types.NewPointer(types.I8)), ir.NewParam("offset", types.I64), ir.NewParam("whence", types.I32))
+			ftell := cg.module.NewFunc("ftell", types.I64, ir.NewParam("stream", types.NewPointer(types.I8)))
+			
+			// Seek to end of file
+			seekEnd := constant.NewInt(types.I32, 2) // SEEK_END
+			zero := constant.NewInt(types.I64, 0)
+			bb.NewCall(fseek, filePtr, zero, seekEnd)
+			
+			// Get file size
+			fileSize := bb.NewCall(ftell, filePtr)
+			
+			// Rewind to beginning
+			bb.NewCall(rewind, filePtr)
+			
+			// Allocate buffer with file size + 1 for null terminator
+			one := constant.NewInt(types.I64, 1)
+			bufferSize := bb.NewAdd(fileSize, one)
+			buffer := bb.NewCall(cg.malloc, bufferSize)
+			
+			// Read entire file using fread
+			elemSize := constant.NewInt(types.I64, 1)
+			bytesRead := bb.NewCall(cg.fread, buffer, elemSize, fileSize, filePtr)
+			
+			// Add null terminator
+			nullTermPtr := bb.NewGetElementPtr(types.I8, buffer, bytesRead)
+			bb.NewStore(constant.NewInt(types.I8, 0), nullTermPtr)
+			
+			return buffer, bb
+			} else if calleeName == "close-file" {
+				filePtr, bb := cg.genExpr(bb, e.Args[0], vars)
+				
+				// fclose returns 0 on success, EOF on error
+				result := bb.NewCall(cg.fclose, filePtr)
+				// Convert to int64 for consistency
+				extResult := bb.NewSExt(result, types.I64)
+				return extResult, bb
+			} else if calleeName == "args" {
+			// Load argc and argv from global variables
+			argc := bb.NewLoad(types.I32, cg.globalArgc)
+			argv := bb.NewLoad(types.NewPointer(types.NewPointer(types.I8)), cg.globalArgv)
+			
+			// Skip the first argument (program name) - start from index 1
+			one32 := constant.NewInt(types.I32, 1)
+			argcMinus1 := bb.NewSub(argc, one32)
+			argCount := bb.NewSExt(argcMinus1, types.I64) // Convert to i64 for list length
+			
+			// Check if there are any arguments
+			zero64 := constant.NewInt(types.I64, 0)
+			hasArgs := bb.NewICmp(enum.IPredSGT, argCount, zero64)
+			
+			hasArgsBB := bb.Parent.NewBlock("args_has_args")
+			noArgsBB := bb.Parent.NewBlock("args_no_args")
+			contBB := bb.Parent.NewBlock("args_continue")
+			
+			bb.NewCondBr(hasArgs, hasArgsBB, noArgsBB)
+			
+			// Case: no arguments - create empty list
+			elemType := cg.toLLVMType(parser.BasicType("string"))
+			structTy := types.NewStruct(types.I64, types.NewPointer(elemType))
+			structSize := constant.NewInt(types.I64, 16) // sizeof(struct)
+			
+			emptyStructPtr := noArgsBB.NewCall(cg.malloc, structSize)
+			emptyStructPtrTyped := noArgsBB.NewBitCast(emptyStructPtr, types.NewPointer(structTy))
+			emptyLengthPtr := noArgsBB.NewGetElementPtr(structTy, emptyStructPtrTyped, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
+			noArgsBB.NewStore(zero64, emptyLengthPtr)
+			emptyDataPtrPtr := noArgsBB.NewGetElementPtr(structTy, emptyStructPtrTyped, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 1))
+			noArgsBB.NewStore(constant.NewNull(types.NewPointer(elemType)), emptyDataPtrPtr)
+			noArgsBB.NewBr(contBB)
+			
+			// Case: has arguments - create list with arguments
+			bb = hasArgsBB
+			structPtr := bb.NewCall(cg.malloc, structSize)
+			structPtrTyped := bb.NewBitCast(structPtr, types.NewPointer(structTy))
+			
+			// Set length
+			lengthPtr := bb.NewGetElementPtr(structTy, structPtrTyped, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
+			bb.NewStore(argCount, lengthPtr)
+			
+			// Allocate array for string pointers
+			ptrSize := constant.NewInt(types.I64, 8) // size of pointer
+			arraySize := bb.NewMul(argCount, ptrSize)
+			dataPtr := bb.NewCall(cg.malloc, arraySize)
+			dataPtrTyped := bb.NewBitCast(dataPtr, types.NewPointer(elemType))
+			
+			// Set data pointer
+			dataPtrPtr := bb.NewGetElementPtr(structTy, structPtrTyped, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 1))
+			bb.NewStore(dataPtrTyped, dataPtrPtr)
+			
+			// Copy arguments (starting from argv[1])
+			loopBB := bb.Parent.NewBlock("args_loop")
+			loopBodyBB := bb.Parent.NewBlock("args_loop_body")
+			loopEndBB := bb.Parent.NewBlock("args_loop_end")
+			
+			bb.NewBr(loopBB)
+			
+			// Loop initialization
+			zero := constant.NewInt(types.I64, 0)
+			i := loopBB.NewPhi(ir.NewIncoming(zero, bb))
+			
+			// Loop condition
+			cond := loopBB.NewICmp(enum.IPredSLT, i, argCount)
+			loopBB.NewCondBr(cond, loopBodyBB, loopEndBB)
+			
+			// Loop body: copy argv[i+1] to our array[i]
+			argvIdx := loopBodyBB.NewAdd(i, constant.NewInt(types.I64, 1)) // Skip argv[0]
+			argvIdxI32 := loopBodyBB.NewTrunc(argvIdx, types.I32)
+			argPtr := loopBodyBB.NewGetElementPtr(types.NewPointer(types.I8), argv, argvIdxI32)
+			argStr := loopBodyBB.NewLoad(types.NewPointer(types.I8), argPtr)
+			
+			// Store in our array
+			destPtr := loopBodyBB.NewGetElementPtr(types.NewPointer(types.I8), dataPtrTyped, i)
+			loopBodyBB.NewStore(argStr, destPtr)
+			
+			// Loop increment
+			nextI := loopBodyBB.NewAdd(i, constant.NewInt(types.I64, 1))
+			loopBodyBB.NewBr(loopBB)
+			i.Incs = append(i.Incs, ir.NewIncoming(nextI, loopBodyBB))
+			
+			loopEndBB.NewBr(contBB)
+			
+			// Phi to return the correct struct pointer
+			resultPhi := contBB.NewPhi(ir.NewIncoming(emptyStructPtrTyped, noArgsBB), ir.NewIncoming(structPtrTyped, loopEndBB))
+			return resultPhi, contBB
 			} else if vi, ok := vars[calleeName]; ok {
 				callee = bb.NewLoad(vi.Typ, vi.Alloc)
 			} else if f, ok := cg.functions[calleeName]; ok {
@@ -1650,6 +1872,51 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 			return phi, mergeBB
 		}
 		return val, bb
+	case *parser.LambdaExpr:
+		// For lambdas, we need to generate a function
+		// Create unique lambda function name
+		lambdaName := fmt.Sprintf("lambda_%d", cg.stringCounter)
+		cg.stringCounter++
+		
+		// Create parameter list for LLVM function
+		var paramList []*ir.Param
+		for _, p := range e.Params {
+			paramList = append(paramList, ir.NewParam(p.Name, cg.toLLVMType(p.Ty)))
+		}
+		
+		// Get return type
+		var rt types.Type = types.Void
+		if e.ReturnType != nil {
+			rt = cg.toLLVMType(e.ReturnType)
+		}
+		
+		// Create the lambda function
+		lambdaFunc := cg.module.NewFunc(lambdaName, rt, paramList...)
+		lambdaEntry := lambdaFunc.NewBlock("entry")
+		
+		// Create local variables for parameters
+		lambdaVars := make(map[string]varInfo)
+		for i, param := range lambdaFunc.Params {
+			alloc := lambdaEntry.NewAlloca(param.Type())
+			lambdaEntry.NewStore(param, alloc)
+			lambdaVars[e.Params[i].Name] = varInfo{Alloc: alloc, Typ: param.Type()}
+		}
+		
+		// Generate lambda body
+		retVal, retBB := cg.genExpr(lambdaEntry, e.Body, lambdaVars)
+		if retBB.Term == nil {
+			if rt.Equal(types.Void) {
+				retBB.NewRet(nil)
+			} else {
+				retBB.NewRet(retVal)
+			}
+		}
+		
+		// Store the lambda function
+		cg.functions[lambdaName] = lambdaFunc
+		
+		// Return function pointer
+		return lambdaFunc, bb
 	default:
 		panic("unknown expression type")
 		return nil, bb

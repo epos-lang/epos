@@ -1,0 +1,15 @@
+# Test file I/O functionality
+fn main()
+  # Create and write to a file
+  file: file-type = open-file("test.txt")
+  write-file(file, [[Hello, world!
+
+This is a test file.]])
+  close-file(file)
+
+  # Read from the file
+  file2: file-type = open-file("test.txt")
+  text: string = read-file(file2)
+  print(text)
+  close-file(file2)
+end

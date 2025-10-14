@@ -1,0 +1,9 @@
+# Test command line arguments
+fn main()
+    arguments: list(string) = args()
+    count: int = len(arguments)
+    print(count)
+    
+    # This will currently print 0 since args() returns empty list
+    # In a full implementation, we would pass argc/argv to main
+end
