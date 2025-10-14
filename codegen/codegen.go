@@ -299,6 +299,19 @@ func (cg *CodeGen) substituteGenericTypesInExpr(expr parser.Expr, typeMap map[st
 			Elements: newElements,
 			Type:     cg.substituteGenericType(e.Type, typeMap),
 		}
+	case *parser.RecordExpr:
+		newFields := make(map[string]parser.Expr)
+		for name, expr := range e.Fields {
+			newFields[name] = cg.substituteGenericTypesInExpr(expr, typeMap)
+		}
+		return &parser.RecordExpr{
+			Fields: newFields,
+			Type:   cg.substituteGenericType(e.Type, typeMap),
+		}
+	case *parser.SpreadExpr:
+		return &parser.SpreadExpr{
+			Expr: cg.substituteGenericTypesInExpr(e.Expr, typeMap),
+		}
 	default:
 		return expr // Return as-is for other expression types
 	}
@@ -448,6 +461,26 @@ func (cg *CodeGen) genPrint(bb *ir.Block, val value.Value, pty parser.Type, vars
 	case parser.ListType:
 		bb = cg.printString(bb, "{")
 		structPtr := val
+		
+		// Check if the list pointer is null (empty list)
+		nullPtr := constant.NewNull(structPtr.Type().(*types.PointerType))
+		isNull := bb.NewICmp(enum.IPredEQ, structPtr, nullPtr)
+		cg.listPrintCounter++
+		nullId := cg.listPrintCounter
+		nullBB := bb.Parent.NewBlock(fmt.Sprintf("list_null_%d", nullId))
+		notNullBB := bb.Parent.NewBlock(fmt.Sprintf("list_not_null_%d", nullId))
+		bb.NewCondBr(isNull, nullBB, notNullBB)
+		
+		// Handle null list case
+		nullBB = cg.printString(nullBB, "}")
+		nullAfterBB := bb.Parent.NewBlock(fmt.Sprintf("list_null_after_%d", nullId))
+		if addNewline {
+			nullBB = cg.printString(nullBB, "\n")
+		}
+		nullBB.NewBr(nullAfterBB)
+		
+		// Handle non-null list case
+		bb = notNullBB
 		structTy := structPtr.Type().(*types.PointerType).ElemType
 		lengthPtr := bb.NewGetElementPtr(structTy, structPtr, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
 		length := bb.NewLoad(types.I64, lengthPtr)
@@ -503,7 +536,12 @@ func (cg *CodeGen) genPrint(bb *ir.Block, val value.Value, pty parser.Type, vars
 			s += "\n"
 		}
 		afterBB = cg.printString(afterBB, s)
-		return afterBB
+		
+		// Merge null and non-null paths
+		finalAfterBB := bb.Parent.NewBlock(fmt.Sprintf("list_final_after_%d", nullId))
+		afterBB.NewBr(finalAfterBB)
+		nullAfterBB.NewBr(finalAfterBB)
+		return finalAfterBB
 	case parser.RecordType:
 		bb = cg.printString(bb, "@{")
 		structPtr := val
@@ -650,7 +688,7 @@ func (cg *CodeGen) genFunctionBody(s *parser.FunctionStmt) {
 	for i, param := range f.Params {
 		alloc := entry.NewAlloca(param.Type())
 		entry.NewStore(param, alloc)
-		localVars[s.Params[i].Name] = varInfo{Alloc: alloc, Typ: cg.toLLVMType(s.Params[i].Ty)}
+		localVars[s.Params[i].Name] = varInfo{Alloc: alloc, Typ: param.Type()}
 	}
 
 	current := cg.genStmts(entry, s.Body, localVars)
