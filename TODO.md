@@ -38,12 +38,12 @@
     close-file(file)`
 - [x] Add builtin functions for getting command line arguments (example: `arg_list: list(string) = args()`)
 - [x] Add lambda expressions (example: `fn(x: int): int => x + 1`)
-- [ ] Add `_` as a discard variable name (example: `_: int = 1 #=> _ is discarded` or `_list_of_nums: list(int) = {1, 2}`)
+- [.] Add union types (`|`, example: `type string-or-bool = string | bool`)
 - Ideas:?
   - [?] Change multi-line comments to use `(#`/`#)`
   - [ ] Add Uniform function call syntax to replace pipes???
   - [ ] Change match expression to use `=>` instead of `->`??
-- [ ] Add union types (`|`, example: `type string-or-bool = string | bool`)
 - [ ] Add `result`/`option`/`some`/`none`/`ok`/`err`/.. types
+- [ ] Add `_` as a discard variable name (example: `_: int = 1 #=> _ is discarded` or `_list_of_nums: list(int) = {1, 2}`)
 - [ ] Array first/last pattern matching (`{first, ..last}`
 - [ ] Add function overloading (example: `fn add(x: int, y: int): int\n\t x + y\n end\n fn add(x: int, y: int, z: int): int\n\t x + y + z\n end\n add(1, 2)\n add(1, 2, 3)`)

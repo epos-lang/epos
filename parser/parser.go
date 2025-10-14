@@ -1712,8 +1712,8 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 				if err != nil {
 					return nil, err
 				}
-				e.Type = BasicType("int") // placeholder
-				return BasicType("int"), nil
+				e.Type = BasicType("void")
+				return BasicType("void"), nil
 			} else if ve.Name == "error" {
 				if len(e.Args) != 1 {
 					return nil, fmt.Errorf("error takes one argument")
