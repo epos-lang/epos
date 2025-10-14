@@ -38,7 +38,7 @@
     close-file(file)`
 - [x] Add builtin functions for getting command line arguments (example: `arg_list: list(string) = args()`)
 - [x] Add lambda expressions (example: `fn(x: int): int => x + 1`)
-- [.] Add union types (`|`, example: `type string-or-bool = string | bool`)
+- [x] Add union types (`|`, example: `type string-or-bool = string | bool`)
 - Ideas:?
   - [?] Change multi-line comments to use `(#`/`#)`
   - [ ] Add Uniform function call syntax to replace pipes???
