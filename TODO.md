@@ -18,13 +18,17 @@
 - [x] Add generics
   - [x] Fix generics (for real this time)
 - [x] Add `import` (examples: `import "./other-file.epos"`, `import {function, function2} from "./local-module"`)
+  - [.] Fix import error where private functions have to be imported
 - [x] Make `type` a keyword (example: `type new_type = int`)
 - [x] Remove `if`/`while`/`return` statements
 - [x] Make variables immutable
-- [ ] Fix import error where private functions have to be imported
-- [.] Add piping operator (`|>`)
-- [ ] Add float type
-- [ ] Add function pattern matching (example: `fn add(x: int, y: int): int\n\t x + y\n end\n fn add(x: int, y: int, z: int): int\n\t x + y + z\n end\n add(1, 2)\n add(1, 2, 3)`)
+- [ ] Change multi-line comments to use `(#`/`#)`
+- [x] Add piping operator (`|>`)
+- [.] Add float type
+- [.] Add function param default value (`fn test-fn(a: int = 1)`)
+- [ ] Add function overloading (example: `fn add(x: int, y: int): int\n\t x + y\n end\n fn add(x: int, y: int, z: int): int\n\t x + y + z\n end\n add(1, 2)\n add(1, 2, 3)`)
+- [!] Add builtin functions for file reading/writing
+- [!] Add builtin functions for getting command line arguments
 - [ ] Add ranges (example: `{1..5} #=> {1, 2, 3, 4, 5}`)
 - [ ] Add `_` as a discard variable name (example: `_: int = 1 #=> _ is discarded` or `_list_of_nums: list(int) = {1, 2}`)
 - [ ] Array first/last pattern matching (`{first, ..last}`

@@ -1,0 +1,27 @@
+# Pipe operator test
+
+fn add(x: int, y: int): int
+  x + y
+end
+
+fn double(x: int): int
+  x * 2
+end
+
+fn triple(x: int): int
+  x * 3
+end
+
+# Test basic pipe
+result1 = 1 |> add(2) |> double()
+print(result1)  # Should print 6: (1 + 2) * 2 = 6
+
+# Test chained pipes
+result2 = 5 |> double() |> triple()
+print(result2)  # Should print 30: (5 * 2) * 3 = 30
+
+# Test traditional vs pipe style
+traditional = double(add(1, 2))
+piped = 1 |> add(2) |> double()
+print(traditional)  # Should print 6
+print(piped)        # Should print 6

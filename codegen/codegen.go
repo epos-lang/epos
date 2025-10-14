@@ -280,6 +280,12 @@ func (cg *CodeGen) substituteGenericTypesInExpr(expr parser.Expr, typeMap map[st
 			Expr: cg.substituteGenericTypesInExpr(e.Expr, typeMap),
 			Type: cg.substituteGenericType(e.Type, typeMap),
 		}
+	case *parser.PipeExpr:
+		return &parser.PipeExpr{
+			Left:  cg.substituteGenericTypesInExpr(e.Left, typeMap),
+			Right: cg.substituteGenericTypesInExpr(e.Right, typeMap),
+			Type:  cg.substituteGenericType(e.Type, typeMap),
+		}
 	case *parser.CallExpr:
 		newArgs := make([]parser.Expr, len(e.Args))
 		for i, arg := range e.Args {
@@ -931,6 +937,28 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 		} else {
 			panic("unsupported binary operation")
 			return nil, bb
+		}
+	case *parser.PipeExpr:
+		// Transform pipe expr: left |> right into right(left)
+		// If right is a function call, prepend left to its args
+		if callExpr, ok := e.Right.(*parser.CallExpr); ok {
+			// Create new args with left expression first
+			newArgs := []parser.Expr{e.Left}
+			newArgs = append(newArgs, callExpr.Args...)
+			newCallExpr := &parser.CallExpr{
+				Callee: callExpr.Callee,
+				Args:   newArgs,
+				Type:   e.Type,
+			}
+			return cg.genExpr(bb, newCallExpr, vars)
+		} else {
+			// If right is just a function name, call it with left as argument
+			newCallExpr := &parser.CallExpr{
+				Callee: e.Right,
+				Args:   []parser.Expr{e.Left},
+				Type:   e.Type,
+			}
+			return cg.genExpr(bb, newCallExpr, vars)
 		}
 	case *parser.CallExpr:
 		var callee value.Value

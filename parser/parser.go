@@ -59,6 +59,7 @@ const (
 	TokenAsterisk
 	TokenMul
 	TokenTypeKeyword
+	TokenPipe
 )
 
 // Token struct
@@ -114,6 +115,12 @@ type CallExpr struct {
 	Callee Expr
 	Args   []Expr
 	Type   Type
+}
+
+type PipeExpr struct {
+	Left  Expr
+	Right Expr
+	Type  Type
 }
 
 
@@ -339,6 +346,13 @@ func (l *Lexer) Lex() []Token {
 				l.addToken(TokenSpread, "..")
 			} else {
 				l.addToken(TokenDot, ".")
+			}
+		case ch == '|':
+			if l.peekChar() == '>' {
+				l.pos++
+				l.addToken(TokenPipe, "|>")
+			} else {
+				panic(fmt.Sprintf("unexpected character: %c", ch))
 			}
 		default:
 			panic(fmt.Sprintf("unexpected character: %c", ch))
@@ -760,7 +774,22 @@ func (p *Parser) parseRelational() Expr {
 }
 
 func (p *Parser) parseExpr() Expr {
-	return p.parseRelational()
+	return p.parsePipe()
+}
+
+func (p *Parser) parsePipe() Expr {
+	expr := p.parseRelational()
+	for {
+		tok := p.current()
+		if tok.Type == TokenPipe {
+			p.pos++
+			right := p.parseRelational()
+			expr = &PipeExpr{Left: expr, Right: right}
+		} else {
+			break
+		}
+	}
+	return expr
 }
 
 func (p *Parser) parseAdditive() Expr {
@@ -1611,6 +1640,30 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 			}
 		}
 		return nil, fmt.Errorf("field %s not found in record", e.Field)
+	case *PipeExpr:
+		// For pipe expressions: left |> right
+		// The left side is the input, and right side should be a function or callable expression
+		_, err := tc.typeCheckExpr(e.Left, env)
+		if err != nil {
+			return nil, err
+		}
+		
+		// The right side should be a function call where we need to insert the left as first argument
+		if callExpr, ok := e.Right.(*CallExpr); ok {
+			// Create new args with left value as first argument
+			newArgs := append([]Expr{e.Left}, callExpr.Args...)
+			newCall := &CallExpr{Callee: callExpr.Callee, Args: newArgs}
+			
+			// Type check the modified call
+			resultTy, err := tc.typeCheckExpr(newCall, env)
+			if err != nil {
+				return nil, err
+			}
+			e.Type = resultTy
+			return resultTy, nil
+		} else {
+			return nil, fmt.Errorf("right side of pipe must be a function call")
+		}
 	default:
 		return nil, fmt.Errorf("unsupported expression type")
 	}
