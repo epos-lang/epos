@@ -6,14 +6,8 @@ fn filter*(lst: list(t), fun: fn(t) -> bool, index: int = 0): list(t)
     len(lst) -> empty-list
     _ -> match fun(el) then
       true -> {el, ..filter(lst, fun, index + 1)}
-      false -> empty-list
+      _ -> filter(lst, fun, index + 1)
     end
   end
   result
 end
-
-fn is-even(x: int): bool
-  x % 2 == 0
-end
-nums: list(int) = 10..1
-print(nums |> filter(is-even))
