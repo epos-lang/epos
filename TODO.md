@@ -16,11 +16,14 @@
 - [x] Add string interpolation (example: `"Hello #{name}!"` or `[[Hello #{name}!]]`)
 - [x] Add `assert` keyword (example: `assert a + b == 3`)
 - [x] Add generics
+  - [!!] Fix generics (for real this time)
 - [x] Add `import` (examples: `import "./other-file.epos"`, `import {function, function2} from "./local-module"`)
 - [x] Make `type` a keyword (example: `type new_type = int`)
 - [x] Remove `if`/`while`/`return` statements
 - [x] Make variables immutable
-- [ ] Array first/last pattern matching (`{first, ..last}`
 - [.] Add piping operator (`|>`)
+- [ ] Add float type
+- [ ] Add function pattern matching (example: `fn add(x: int, y: int): int\n\t x + y\n end\n fn add(x: int, y: int, z: int): int\n\t x + y + z\n end\n add(1, 2)\n add(1, 2, 3)`)
 - [ ] Add ranges (example: `{1..5} #=> {1, 2, 3, 4, 5}`)
 - [ ] Add `_` as a discard variable name (example: `_: int = 1 #=> _ is discarded` or `_list_of_nums: list(int) = {1, 2}`)
+- [ ] Array first/last pattern matching (`{first, ..last}`
