@@ -1,4 +1,0 @@
-fn append(appendee: list(t), appended: t): list(t)
-  { ..appendee, appended }
-end
-print(append({1, 2, 3}, 4))

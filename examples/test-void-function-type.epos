@@ -1,0 +1,8 @@
+fn call-void-function(a: fn(int))
+  a(5)
+end
+
+fn print_val(a: int)
+  print(a)
+end
+call-void-function(print_val)

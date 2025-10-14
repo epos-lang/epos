@@ -1,0 +1,9 @@
+# Maps over a list
+fn map*(lst: list(t), fun: fn(t) -> t, index: int = 0): list(t)
+  empty-list: list(t) = {}
+  result: list(t) = match index then
+    len(lst) -> empty-list
+    _ -> {lst |> elem(index) |> fun(), ..map(lst, fun, index + 1)}
+  end
+  result
+end

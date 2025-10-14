@@ -30,6 +30,8 @@ const (
 	TokenComma
 	TokenGT
 	TokenLT
+	TokenGTE
+	TokenLTE
 	TokenEQ
 	TokenString
 	TokenMatch
@@ -62,6 +64,8 @@ const (
 	TokenMul
 	TokenTypeKeyword
 	TokenPipe
+	TokenNot
+	TokenNeq
 )
 
 // Token struct
@@ -184,6 +188,12 @@ type ListExpr struct {
 type SpreadExpr struct {
 	Expr Expr
 	Type Type
+}
+
+type RangeExpr struct {
+	Start Expr
+	End   Expr
+	Type  Type
 }
 
 type Type interface{}
@@ -338,9 +348,19 @@ func (l *Lexer) Lex() []Token {
 				l.addToken(TokenAssign, "=")
 			}
 		case ch == '>':
-			l.addToken(TokenGT, ">")
+			if l.peekChar() == '=' {
+				l.pos++
+				l.addToken(TokenGTE, ">=")
+			} else {
+				l.addToken(TokenGT, ">")
+			}
 		case ch == '<':
-			l.addToken(TokenLT, "<")
+			if l.peekChar() == '=' {
+				l.pos++
+				l.addToken(TokenLTE, "<=")
+			} else {
+				l.addToken(TokenLT, "<")
+			}
 		case ch == ',':
 			l.addToken(TokenComma, ",")
 		case ch == ';':
@@ -368,6 +388,13 @@ func (l *Lexer) Lex() []Token {
 				l.addToken(TokenSpread, "..")
 			} else {
 				l.addToken(TokenDot, ".")
+			}
+		case ch == '!':
+			if l.peekChar() == '=' {
+				l.pos++
+				l.addToken(TokenNeq, "!=")
+			} else {
+				panic(fmt.Sprintf("unexpected character: %c (use 'not' keyword instead)", ch))
 			}
 		case ch == '|':
 			if l.peekChar() == '>' {
@@ -566,8 +593,8 @@ func (l *Lexer) lexNumber() {
 		l.pos++
 	}
 	
-	// Check for decimal point
-	if l.pos < len(l.input) && l.input[l.pos] == '.' {
+	// Check for decimal point (but not if it's followed by another dot for ranges)
+	if l.pos < len(l.input) && l.input[l.pos] == '.' && l.peekChar() != '.' {
 		hasDecimal = true
 		l.pos++ // consume the '.'
 		
@@ -621,6 +648,8 @@ func (l *Lexer) lexIdentifier() {
 		l.tokens = append(l.tokens, Token{Type: TokenFrom, Value: id})
 	} else if id == "type" {
 		l.tokens = append(l.tokens, Token{Type: TokenTypeKeyword, Value: id})
+	} else if id == "not" {
+		l.tokens = append(l.tokens, Token{Type: TokenNot, Value: id})
 	} else {
 		l.tokens = append(l.tokens, Token{Type: TokenIdentifier, Value: id})
 	}
@@ -813,7 +842,7 @@ func (p *Parser) parseRelational() Expr {
 	expr := p.parseAdditive()
 	for {
 		tok := p.current()
-		if tok.Type == TokenGT || tok.Type == TokenLT || tok.Type == TokenEQ {
+		if tok.Type == TokenGT || tok.Type == TokenLT || tok.Type == TokenGTE || tok.Type == TokenLTE || tok.Type == TokenEQ || tok.Type == TokenNeq {
 			p.pos++
 			right := p.parseAdditive()
 			expr = &BinaryExpr{Op: tok.Type, Left: expr, Right: right}
@@ -844,16 +873,26 @@ func (p *Parser) parsePipe() Expr {
 }
 
 func (p *Parser) parseAdditive() Expr {
-	expr := p.parseMultiplicative()
+	expr := p.parseRange()
 	for {
 		tok := p.current()
 		if tok.Type == TokenPlus || tok.Type == TokenMinus {
 			p.pos++
-			right := p.parseMultiplicative()
+			right := p.parseRange()
 			expr = &BinaryExpr{Op: tok.Type, Left: expr, Right: right}
 		} else {
 			break
 		}
+	}
+	return expr
+}
+
+func (p *Parser) parseRange() Expr {
+	expr := p.parseMultiplicative()
+	if p.current().Type == TokenSpread {
+		p.pos++
+		end := p.parseMultiplicative()
+		expr = &RangeExpr{Start: expr, End: end}
 	}
 	return expr
 }
@@ -878,6 +917,11 @@ func (p *Parser) parseUnary() Expr {
 		p.pos++
 		expr := p.parsePrimary()
 		return &UnaryExpr{Op: TokenMinus, Expr: expr}
+	}
+	if p.current().Type == TokenNot {
+		p.pos++
+		expr := p.parsePrimary()
+		return &UnaryExpr{Op: TokenNot, Expr: expr}
 	}
 	return p.parseDot()
 }
@@ -913,6 +957,7 @@ func (p *Parser) parsePrimary() Expr {
 		p.consume(TokenEnd)
 		expr = &MatchExpr{Expr: matchExpr, Cases: cases, Default: defaultExpr}
 	case TokenNumber:
+		// Regular number parsing
 		p.pos++
 		// Check if it's a float (contains a decimal point)
 		if strings.Contains(tok.Value, ".") {
@@ -975,6 +1020,10 @@ func (p *Parser) parsePrimary() Expr {
 		}
 		p.consume(TokenRBrace)
 		expr = &RecordExpr{Fields: fields}
+	case TokenSpread:
+		// This should not happen in normal parsing, but if it does,
+		// it indicates a parsing error where range parsing failed
+		panic(fmt.Sprintf("unexpected range operator .. in expression context - this should be handled by parseRange()"))
 	default:
 		panic(fmt.Sprintf("unexpected token in primary: %v", tok))
 	}
@@ -1023,8 +1072,14 @@ func (p *Parser) parseType() Type {
 			}
 		}
 		p.consume(TokenRParen)
-		p.consume(TokenArrow)
-		ret := p.parseType()
+		// Check if there's an arrow for return type, if not it's a void function
+		var ret Type
+		if p.current().Type == TokenArrow {
+			p.consume(TokenArrow)
+			ret = p.parseType()
+		} else {
+			ret = BasicType("void")
+		}
 		return FunctionType{Params: params, Return: ret}
 	} else {
 		tok := p.consume(TokenIdentifier)
@@ -1037,6 +1092,8 @@ func (p *Parser) parseType() Type {
 			return BasicType("bool")
 		case "float":
 			return BasicType("float")
+		case "void":
+			return BasicType("void")
 		case "list":
 			p.consume(TokenLParen)
 			elem := p.parseType()
@@ -1295,11 +1352,15 @@ func (tc *TypeChecker) TypeCheck(stmts []Stmt) error {
 					requiredArgs++
 				}
 			}
+			returnType := f.ReturnType
+			if returnType == nil {
+				returnType = BasicType("void")
+			}
 			tc.funcs[f.Name] = struct {
 				Params       []Type
 				Return       Type
 				RequiredArgs int
-			}{Params: params, Return: f.ReturnType, RequiredArgs: requiredArgs}
+			}{Params: params, Return: returnType, RequiredArgs: requiredArgs}
 		}
 	}
 
@@ -1497,11 +1558,19 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 		if err != nil {
 			return nil, err
 		}
-		if ty != BasicType("int") && ty != BasicType("float") {
-			return nil, fmt.Errorf("unary operator requires numeric type")
+		if e.Op == TokenNot {
+			if ty != BasicType("bool") {
+				return nil, fmt.Errorf("logical not operator requires boolean type")
+			}
+			e.Type = BasicType("bool")
+			return BasicType("bool"), nil
+		} else {
+			if ty != BasicType("int") && ty != BasicType("float") {
+				return nil, fmt.Errorf("unary operator requires numeric type")
+			}
+			e.Type = ty
+			return ty, nil
 		}
-		e.Type = ty
-		return ty, nil
 	case *BinaryExpr:
 		leftTy, err := tc.typeCheckExpr(e.Left, env)
 		if err != nil {
@@ -1551,6 +1620,20 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 					return nil, err
 				}
 				e.Type = BasicType("int") // placeholder
+				return BasicType("int"), nil
+			} else if ve.Name == "error" {
+				if len(e.Args) != 1 {
+					return nil, fmt.Errorf("error takes one argument")
+				}
+				argTy, err := tc.typeCheckExpr(e.Args[0], env)
+				if err != nil {
+					return nil, err
+				}
+				if argTy != BasicType("string") {
+					return nil, fmt.Errorf("error requires a string argument")
+				}
+				// The error function never returns (it exits), but we need a return type
+				e.Type = BasicType("int") // dummy type since it never returns
 				return BasicType("int"), nil
 			} else if ve.Name == "compare" {
 				if len(e.Args) != 2 {
@@ -1716,6 +1799,23 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 			return lt, nil
 		}
 		return nil, fmt.Errorf("spread operator on non-list type")
+	case *RangeExpr:
+		startTy, err := tc.typeCheckExpr(e.Start, env)
+		if err != nil {
+			return nil, err
+		}
+		endTy, err := tc.typeCheckExpr(e.End, env)
+		if err != nil {
+			return nil, err
+		}
+		startTy = tc.resolveType(startTy)
+		endTy = tc.resolveType(endTy)
+		if startTy != BasicType("int") || endTy != BasicType("int") {
+			return nil, fmt.Errorf("range expressions require integer bounds")
+		}
+		listTy := ListType{Element: BasicType("int")}
+		e.Type = listTy
+		return listTy, nil
 	case *MatchExpr:
 		matchTy, err := tc.typeCheckExpr(e.Expr, env)
 		if err != nil {
@@ -2187,7 +2287,7 @@ func isNumberOp(op TokenType) bool {
 
 func isComparisonOp(op TokenType) bool {
 	switch op {
-	case TokenGT, TokenLT, TokenEQ:
+	case TokenGT, TokenLT, TokenGTE, TokenLTE, TokenEQ, TokenNeq:
 		return true
 	default:
 		return false

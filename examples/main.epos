@@ -1,8 +1,35 @@
-import {test_generics, add} from "./generics.epos"
-#import {test_match, test1} from "./match.epos"
+import {head} from "./head.epos"
+import {tail} from "./tail.epos"
+import {map} from "./map.epos"
+import {each} from "./each.epos"
+
+fn test-head()
+  assert head(1..3) == 1
+end
+
+fn test-tail()
+  #assert tail(1..3) == {2, 3}
+end
+
+fn double(x: int): int
+  x * 2
+end
+fn test-map()
+  #assert map(1..3, double) == {2, 4, 6}
+  #print(map(1..3, double))
+end
+
+fn print_val(x: int)
+  print(x)
+end
+fn test-each()
+  1..5 |> each(print_val)
+end
 
 fn main(): int
-  test_generics()
-  #test_match()
+  test-head()
+  test-tail()
+  test-map()
+  test-each()
   0
 end

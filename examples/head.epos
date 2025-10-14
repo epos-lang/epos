@@ -1,6 +1,4 @@
 # Gets the first element of a list
-fn head(lst: list(a)): a
-  elem(lst, 0)
+fn head*(lst: list(a)): a
+  lst |> elem(0)
 end
-
-print(head({1, 2, 3}))

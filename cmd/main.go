@@ -172,8 +172,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Clean up temp files
-	os.Remove(tempLL)
+	// Keep temp.ll for debugging, only clean up .s file
 	os.Remove(tempS)
 
 	fmt.Printf("Executable created: %s\n", outputFile)
