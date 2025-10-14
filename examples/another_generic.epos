@@ -1,0 +1,14 @@
+fn test-fn(el: t): t
+  new-el: t = el
+  new-el
+end
+print(test-fn(1))
+
+fn create-list(el: t): list(t)
+  {el}
+end
+
+print(create-list(1))
+print(create-list("hello"))
+print(create-list({1, 2, 3}))
+print(create-list(true))

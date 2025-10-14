@@ -1,0 +1,8 @@
+import {test_generics, add} from "./generics.epos"
+#import {test_match, test1} from "./match.epos"
+
+fn main(): int
+  test_generics()
+  #test_match()
+  0
+end

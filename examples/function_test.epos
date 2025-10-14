@@ -1,0 +1,19 @@
+# Test function declaration syntax
+fn add(a: int, b: int): int
+    a + b
+end
+
+# Test function type syntax  
+fn higher-order(f: fn(int, int) -> int, x: int, y: int): int
+    f(x, y)
+end
+
+# Test type alias for function type
+type add_fn_type = fn(int, int) -> int
+
+# Main function to test
+fn main(): int
+    result: int = higher-order(add, 5, 3)
+    print(result)
+    result
+end

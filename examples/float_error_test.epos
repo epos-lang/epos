@@ -1,0 +1,5 @@
+# This should cause a type error - mixing int and float without casting
+x: int = 5
+y: float = 3.14
+# This should fail type checking:
+# result = x + y

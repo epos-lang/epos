@@ -1,0 +1,7 @@
+# Multiple generic parameters test
+fn pair(x: a, y: b): list(a)
+  {x}
+end
+
+print(pair(1, "hello"))
+print(pair("world", 42))

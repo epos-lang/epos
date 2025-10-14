@@ -25,10 +25,10 @@
 - [x] Add piping operator (`|>`)
 - [x] Add float type
 - [ ] Change multi-line comments to use `(#`/`#)`
-- [.] Add function param default value (`fn test-fn(a: int = 1)`)
-- [ ] Add function overloading (example: `fn add(x: int, y: int): int\n\t x + y\n end\n fn add(x: int, y: int, z: int): int\n\t x + y + z\n end\n add(1, 2)\n add(1, 2, 3)`)
+- [x] Add function param default value (`fn test-fn(a: int = 1)`)
 - [!] Add builtin functions for file reading/writing
 - [!] Add builtin functions for getting command line arguments
 - [ ] Add ranges (example: `{1..5} #=> {1, 2, 3, 4, 5}`)
 - [ ] Add `_` as a discard variable name (example: `_: int = 1 #=> _ is discarded` or `_list_of_nums: list(int) = {1, 2}`)
 - [ ] Array first/last pattern matching (`{first, ..last}`
+- [ ] Add function overloading (example: `fn add(x: int, y: int): int\n\t x + y\n end\n fn add(x: int, y: int, z: int): int\n\t x + y + z\n end\n add(1, 2)\n add(1, 2, 3)`)

@@ -239,8 +239,9 @@ type RecordDecl struct {
 }
 
 type Param struct {
-	Name string
-	Ty   Type
+	Name    string
+	Ty      Type
+	Default Expr  // nil if no default value
 }
 
 type ExprStmt struct {
@@ -723,13 +724,23 @@ func (p *Parser) parseFunction() *FunctionStmt {
 		paramName := p.consume(TokenIdentifier).Value
 		p.consume(TokenColon)
 		paramType := p.parseType()
-		params = append(params, Param{Name: paramName, Ty: paramType})
+		var defaultVal Expr
+		if p.current().Type == TokenAssign {
+			p.pos++
+			defaultVal = p.parseExpr()
+		}
+		params = append(params, Param{Name: paramName, Ty: paramType, Default: defaultVal})
 		for p.current().Type == TokenComma {
 			p.pos++
 			paramName := p.consume(TokenIdentifier).Value
 			p.consume(TokenColon)
 			paramType := p.parseType()
-			params = append(params, Param{Name: paramName, Ty: paramType})
+			var defaultVal Expr
+			if p.current().Type == TokenAssign {
+				p.pos++
+				defaultVal = p.parseExpr()
+			}
+			params = append(params, Param{Name: paramName, Ty: paramType, Default: defaultVal})
 		}
 	}
 	p.consume(TokenRParen)
@@ -1104,16 +1115,18 @@ func (p *Parser) parseRecordDecl() *TypeAliasStmt {
 
 type TypeChecker struct {
 	funcs map[string]struct {
-		Params []Type
-		Return Type
+		Params       []Type
+		Return       Type
+		RequiredArgs int  // number of required (non-default) parameters
 	}
 	namedTypes map[string]Type
 }
 
 func NewTypeChecker() *TypeChecker {
 	return &TypeChecker{funcs: make(map[string]struct {
-		Params []Type
-		Return Type
+		Params       []Type
+		Return       Type
+		RequiredArgs int
 	}), namedTypes: make(map[string]Type)}
 }
 
@@ -1209,13 +1222,18 @@ func (tc *TypeChecker) TypeCheck(stmts []Stmt) error {
 	for _, stmt := range stmts {
 		if f, ok := stmt.(*FunctionStmt); ok {
 			var params []Type
+			requiredArgs := 0
 			for _, p := range f.Params {
 				params = append(params, p.Ty)
+				if p.Default == nil {
+					requiredArgs++
+				}
 			}
 			tc.funcs[f.Name] = struct {
-				Params []Type
-				Return Type
-			}{Params: params, Return: f.ReturnType}
+				Params       []Type
+				Return       Type
+				RequiredArgs int
+			}{Params: params, Return: f.ReturnType, RequiredArgs: requiredArgs}
 		}
 	}
 
@@ -1505,7 +1523,17 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 		if !ok {
 			return nil, fmt.Errorf("called non-function of type %v", calleeTy)
 		}
-		if len(e.Args) != len(ft.Params) {
+		// Get function signature to check for default parameters
+		if ve, ok := e.Callee.(*VarExpr); ok {
+			if sig, exists := tc.funcs[ve.Name]; exists {
+				provided := len(e.Args)
+				required := sig.RequiredArgs
+				total := len(sig.Params)
+				if provided < required || provided > total {
+					return nil, fmt.Errorf("argument count mismatch: expected %d-%d, got %d", required, total, provided)
+				}
+			}
+		} else if len(e.Args) != len(ft.Params) {
 			return nil, fmt.Errorf("argument count mismatch: expected %d, got %d", len(ft.Params), len(e.Args))
 		}
 		

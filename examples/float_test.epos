@@ -1,0 +1,26 @@
+# Float arithmetic test
+x: float = 3.14
+y: float = 2.71
+sum: float = x + y
+diff: float = x - y
+product: float = x * y
+quotient: float = x / y
+
+# Test unary minus
+neg_x: float = -x
+
+# Test float comparisons
+is_greater = x > y
+is_equal = x == x
+
+# Test mixed operations with proper typing
+a: float = 10.5
+b: int = 5
+# Note: In a real implementation we'd need type casting
+# For now, keep operations between same types
+
+fn test-float-function(f: float): float
+    f * 2.0
+end
+
+result = test-float-function(5.25)

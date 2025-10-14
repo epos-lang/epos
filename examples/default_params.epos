@@ -1,0 +1,37 @@
+# Test file for default parameter functionality
+
+# Function with one default parameter
+fn test-fn(a: int, b: int = 3): int
+    a + b
+end
+
+# Function with multiple default parameters  
+fn greet(name: string, prefix: string = "Hello", suffix: string = "!"): string
+    prefix + " " + name + suffix
+end
+
+# Function with mixed parameters (some with defaults, some without)
+fn calculate(x: int, y: int = 10, z: int = 5): int
+    x * y + z
+end
+
+# Test calls with various argument combinations
+result1 = test-fn(1)        # Should be 1 + 3 = 4
+result2 = test-fn(1, 2)     # Should be 1 + 2 = 3
+
+greeting1 = greet("World")                    # "Hello World!"
+greeting2 = greet("Alice", "Hi")              # "Hi Alice!"
+greeting3 = greet("Bob", "Hey", "?")          # "Hey Bob?"
+
+calc1 = calculate(2)        # 2 * 10 + 5 = 25
+calc2 = calculate(2, 4)     # 2 * 4 + 5 = 13  
+calc3 = calculate(2, 4, 1)  # 2 * 4 + 1 = 9
+
+print(result1)
+print(result2)
+print(greeting1)
+print(greeting2) 
+print(greeting3)
+print(calc1)
+print(calc2)
+print(calc3)

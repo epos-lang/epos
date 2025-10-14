@@ -1,0 +1,8 @@
+# Basic generic function test
+fn identity(x: t): t
+  x
+end
+
+print(identity(42))
+print(identity("hello"))
+print(identity(true))

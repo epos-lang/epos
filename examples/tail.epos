@@ -1,0 +1,15 @@
+# Gets the tail of a list
+fn tail-caller(lst: list(t), n: int): list(t)
+  empty-list: list(t) = {}
+  result: list(t) = match n then
+    len(lst) -> empty-list
+    _ -> {elem(lst, n), ..tail-caller(lst, n + 1)}
+  end
+  result
+end
+
+fn tail(lst: list(t)): list(t)
+  tail-caller(lst, 1)
+end
+
+print(tail({1, 2, 3, 4})) # should return {2, 3, 4}

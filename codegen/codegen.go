@@ -17,6 +17,7 @@ type CodeGen struct {
 	module                                 *ir.Module
 	vars                                   map[string]varInfo
 	functions                              map[string]*ir.Func
+	functionDefinitions                    map[string]*parser.FunctionStmt  // Store all function definitions
 	genericFunctions                       map[string]*parser.FunctionStmt
 	printf                                 *ir.Func
 	globalFmt                              *ir.Global
@@ -162,8 +163,9 @@ func (cg *CodeGen) instantiateGenericFunction(name string, argTypes []parser.Typ
 	// Substitute generic types in parameters
 	for i, param := range genericFunc.Params {
 		specialized.Params[i] = parser.Param{
-			Name: param.Name,
-			Ty:   cg.substituteGenericType(param.Ty, typeMap),
+			Name:    param.Name,
+			Ty:      cg.substituteGenericType(param.Ty, typeMap),
+			Default: param.Default, // Keep default value as is for now
 		}
 	}
 	
@@ -388,7 +390,7 @@ func NewCodeGen() *CodeGen {
 	exit := m.NewFunc("exit", types.Void, ir.NewParam("", types.I32))
 	assertFailMsg := m.NewGlobalDef("assert_fail_msg", constant.NewCharArrayFromString("Assertion failed\n\x00"))
 
-	return &CodeGen{module: m, vars: make(map[string]varInfo), functions: make(map[string]*ir.Func), genericFunctions: make(map[string]*parser.FunctionStmt), printf: printf, globalFmt: globalFmt, strFmt: strFmt, ifCounter: 0, whileCounter: 0, matchCounter: 0, stringCounter: 0, listPrintCounter: 0, recordPrintCounter: 0, intToStringCounter: 0, strlen: strlen, strcpy: strcpy, strcat: strcat, malloc: malloc, memcpy: memcpy, strcmp: strcmp, memcmp: memcmp, sprintf: sprintf, exit: exit, assertFailMsg: assertFailMsg}
+	return &CodeGen{module: m, vars: make(map[string]varInfo), functions: make(map[string]*ir.Func), functionDefinitions: make(map[string]*parser.FunctionStmt), genericFunctions: make(map[string]*parser.FunctionStmt), printf: printf, globalFmt: globalFmt, strFmt: strFmt, ifCounter: 0, whileCounter: 0, matchCounter: 0, stringCounter: 0, listPrintCounter: 0, recordPrintCounter: 0, intToStringCounter: 0, strlen: strlen, strcpy: strcpy, strcat: strcat, malloc: malloc, memcpy: memcpy, strcmp: strcmp, memcmp: memcmp, sprintf: sprintf, exit: exit, assertFailMsg: assertFailMsg}
 }
 
 func (cg *CodeGen) getParserType(expr parser.Expr) parser.Type {
@@ -643,6 +645,8 @@ func (cg *CodeGen) Generate(stmts []parser.Stmt) *ir.Module {
 }
 
 func (cg *CodeGen) declareFunctionSignature(s *parser.FunctionStmt) {
+	// Store function definition for default parameter lookup later
+	cg.functionDefinitions[s.Name] = s
 
 	// Check if function has generic types - if so, store it for later instantiation
 	for _, p := range s.Params {
@@ -1099,11 +1103,41 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 		// Only process arguments for regular function calls, not built-ins
 		if callee != nil {
 			var args []value.Value
+			var funcStmt *parser.FunctionStmt
+			
+			// Get the function statement to check for default parameters
+			if ve, ok := e.Callee.(*parser.VarExpr); ok {
+				calleeName := ve.Name
+				// Find the function statement from stored definitions
+				if fd, exists := cg.functionDefinitions[calleeName]; exists {
+					funcStmt = fd
+				} else if gf, exists := cg.genericFunctions[calleeName]; exists {
+					funcStmt = gf
+				}
+			}
+			
+			// Process arguments, filling defaults for missing ones
+			providedArgs := len(e.Args)
 			for _, arg := range e.Args {
 				var argVal value.Value
 				argVal, bb = cg.genExpr(bb, arg, vars)
 				args = append(args, argVal)
 			}
+			
+			// Add default values for missing arguments
+			if funcStmt != nil && providedArgs < len(funcStmt.Params) {
+				for i := providedArgs; i < len(funcStmt.Params); i++ {
+					param := funcStmt.Params[i]
+					if param.Default != nil {
+						var defaultVal value.Value
+						defaultVal, bb = cg.genExpr(bb, param.Default, vars)
+						args = append(args, defaultVal)
+					} else {
+						panic(fmt.Sprintf("Missing argument for parameter %s and no default value", param.Name))
+					}
+				}
+			}
+			
 			return bb.NewCall(callee, args...), bb
 		}
 		

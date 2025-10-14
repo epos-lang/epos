@@ -1,0 +1,8 @@
+# Generic list function test
+fn wrap(x: t): list(t)
+  {x}
+end
+
+print(wrap(5))
+print(wrap("test"))
+print(wrap(true))

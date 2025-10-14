@@ -1,0 +1,130 @@
+simple_generic.epos:: 
+
+test.epos:: Type error: case type mismatch
+
+typing_test.epos:: 
+add.epos:: Executable created: build/add
+Running build/add...
+3
+comments.epos:: Executable created: build/comments
+Running build/comments...
+compare_edge_cases.epos:: 
+compare_more.epos:: Executable created: build/compare_more
+Running build/compare_more...
+false
+false
+compare_simple.epos:: Executable created: build/compare_simple
+Running build/compare_simple...
+true
+false
+true
+false
+true
+false
+compare_simple_records.epos:: Executable created: build/compare_simple_records
+Running build/compare_simple_records...
+false
+false
+compare_test.epos:: Executable created: build/compare_test
+Running build/compare_test...
+true
+false
+true
+false
+true
+false
+true
+false
+empty_list_param_test.epos:: Executable created: build/empty_list_param_test
+Running build/empty_list_param_test...
+got list
+got list
+empty_spread_test.epos:: Executable created: build/empty_spread_test
+Running build/empty_spread_test...
+1
+1
+factorial_match.epos:: Executable created: build/factorial_match
+Running build/factorial_match...
+0
+generics.epos:: 
+hello.epos:: Executable created: build/hello
+Running build/hello...
+Hello World!
+higher_order.epos:: 
+import_test.epos:: Executable created: build/import_test
+Running build/import_test...
+list.epos:: Executable created: build/list
+Running build/list...
+{1, 2, 3}
+3
+{"a", "b", "c", "def"}
+b
+{true, false, true}
+true
+{{1, 2, 3}, {4, 5, 6}, {7, 8, 9}}
+{4, 5, 6}
+{{{1, 2, 3}, {4, 5, 6}, {7, 8, 9}}, {{1, 2, 3}, {4, 5, 6}, {7, 8, 9}}}
+list_eq_test.epos:: Executable created: build/list_eq_test
+Running build/list_eq_test...
+false
+list_param_test.epos:: Executable created: build/list_param_test
+Running build/list_param_test...
+got list
+got list
+list_test.epos:: Executable created: build/list_test
+Running build/list_test...
+true
+main.epos:: Type error: undefined: test_match
+match.epos:: Executable created: build/match
+Running build/match...
+1-5
+math_module.epos:: Executable created: build/math_module
+Running build/math_module...
+multiline.epos:: Executable created: build/multiline
+Running build/multiline...
+This is a multi-line string.
+It spans several lines
+for readability!
+named_empty_spread.epos:: Executable created: build/named_empty_spread
+Running build/named_empty_spread...
+success
+print_spread_test.epos:: Executable created: build/print_spread_test
+Running build/print_spread_test...
+{1}
+record_eq_test.epos:: Executable created: build/record_eq_test
+Running build/record_eq_test...
+false
+records.epos:: 
+recursion.epos:: Executable created: build/recursion
+Running build/recursion...
+120
+simple_empty_spread.epos:: Executable created: build/simple_empty_spread
+Running build/simple_empty_spread...
+success
+simple_generic.epos:: Executable created: build/simple_generic
+Running build/simple_generic...
+hi
+{1, 2, 3}
+@{name => John, age => 30}
+simple_interpolation.epos:: Type error: undefined: return
+simple_record.epos:: Executable created: build/simple_record
+Running build/simple_record...
+john
+string_interpolation.epos:: Type error: undefined: return
+test_assert.epos:: Executable created: build/test_assert
+Running build/test_assert...
+test_assert_fail.epos:: Executable created: build/test_assert_fail
+Running build/test_assert_fail...
+Assertion failed
+Error running executable: exit status 1
+test_assert_pass.epos:: Executable created: build/test_assert_pass
+Running build/test_assert_pass...
+All assertions passed!
+test.epos:: 
+typing_test.epos:: 
+visibility_test.epos:: Executable created: build/visibility_test
+Running build/visibility_test...
+void_function.epos:: Executable created: build/void_function
+Running build/void_function...
+42
+while.epos:: 

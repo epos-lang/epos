@@ -1,0 +1,39 @@
+# Comprehensive float test
+a = 10.5
+b = 3.2
+
+# Basic arithmetic
+add_result = a + b
+sub_result = a - b
+mul_result = a * b
+div_result = a / b
+
+# Unary minus
+neg_a = -a
+neg_b = -(-b)  # Double negation
+
+# Comparisons
+greater = a > b
+less = a < b
+equal = a == a
+not_equal = a == b
+
+# Function with float parameter and return
+fn calculate-circle-area(radius: float): float
+    pi = 3.14159
+    pi * radius * radius
+end
+
+circle_area = calculate-circle-area(2.5)
+
+# Function composition with floats
+fn double-value(x: float): float
+    x * 2.0
+end
+
+fn square-value(x: float): float
+    x * x
+end
+
+doubled = double-value(4.5)
+squared = square-value(3.0)

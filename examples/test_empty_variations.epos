@@ -1,0 +1,8 @@
+arr1: list(int) = {}
+print(arr1)
+
+arr2: list(string) = {}
+print(arr2)
+
+arr3: list(bool) = {}
+print(arr3)

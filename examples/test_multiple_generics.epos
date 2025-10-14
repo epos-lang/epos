@@ -1,0 +1,35 @@
+# Gets the first element of a list
+fn head(lst: list(a)): a
+  elem(lst, 0)
+end
+
+
+# Gets the tail of a list
+fn tail-caller(lst: list(t), n: int): list(t)
+  empty-lst: list(t) = {}
+  match n then
+    len(lst) -> empty-lst
+    _ -> {elem(lst, n), ..tail-caller(lst, n + 1)}
+  end
+end
+
+fn tail(lst: list(t)): list(t)
+  tail-caller(lst, 1)
+end
+
+print(head({1, 2, 3}))
+print(tail({1, 2, 3}))
+
+# Maps a function over a list
+#[fn map(lst: list(a), fun: fn(a) -> b): list(b)
+  match lst then
+    {} -> {}
+    _ -> {fun(head(lst)), ..map(tail(lst), fun)}
+  end
+end
+
+
+fn double(x: int): int
+  x * 2
+end
+print(map({1, 2, 3}, double))]#

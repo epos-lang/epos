@@ -1,0 +1,14 @@
+# Test function declaration syntax
+fn add(a: c, b: c): c
+  a + b
+end
+
+fn higher-order(f: fn(t, t) -> t, x: t, y: t): t
+  f(x, y)
+end
+
+print(add(5, 3))
+print(higher-order(add, 5, 3))
+
+print(add("Hello ", "Epos"))
+print(higher-order(add, "Hello ", "Epos"))

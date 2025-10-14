@@ -1,0 +1,7 @@
+# Simple test for default parameters
+fn add-with-default(a: int, b: int = 5): int
+    a + b
+end
+
+result = add-with-default(3)
+print(result)

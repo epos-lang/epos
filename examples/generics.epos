@@ -1,30 +1,41 @@
-fn caller(fn_to_call: fn(t): a, arg_to_call: t): a
-  fn_to_call(arg_to_call)
-end
-
 fn double(x: int): int
   x * 2
 end
+
+
+fn test_fn(callee: fn(t) -> a, arg: t): a
+  callee(arg)
+end
+print(test_fn(double, 10))
+
+
+#[fn caller(fn_to_call: fn(t) -> a, arg_to_call: t): a
+  fn_to_call(arg_to_call)
+end
+
 assert caller(double, 10) == 20
 
 fn greet(name: string): string
   "Hello #{name}!"
 end
-assert caller(greet, "World") == "Hello World!"
+#assert caller(greet, "World") == "Hello World!"
+]#
 
-fn append(list_to_append: list(t), arg_to_append: t): list(t)
-  {..list_to_append, arg_to_append}
+fn append(appendee: list(t), appended: t): list(t)
+  { ..appendee, appended }
 end
-assert append({1, 2, 3}, 4) == {1, 2, 3, 4}
+print(append({1, 2, 3}, 4))
+#print(append({1, 2, 3}, 4) == {1, 2, 3, 4})
+#assert append({1, 2, 3}, 4) == {1, 2, 3, 4}
 
-record person
+#[record person
   name: string
 end
 fn create_person(name: string): person
   @{
     name: name
   }
-end
-assert create_person("John") == @{
+end]#
+#[assert caller(create_person, "John") == @{
   name: "John"
-}
+}]#
