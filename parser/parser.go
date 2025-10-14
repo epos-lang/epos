@@ -66,6 +66,8 @@ const (
 	TokenPipe
 	TokenNot
 	TokenNeq
+	TokenAnd
+	TokenOr
 )
 
 // Token struct
@@ -650,6 +652,10 @@ func (l *Lexer) lexIdentifier() {
 		l.tokens = append(l.tokens, Token{Type: TokenTypeKeyword, Value: id})
 	} else if id == "not" {
 		l.tokens = append(l.tokens, Token{Type: TokenNot, Value: id})
+	} else if id == "and" {
+		l.tokens = append(l.tokens, Token{Type: TokenAnd, Value: id})
+	} else if id == "or" {
+		l.tokens = append(l.tokens, Token{Type: TokenOr, Value: id})
 	} else {
 		l.tokens = append(l.tokens, Token{Type: TokenIdentifier, Value: id})
 	}
@@ -858,13 +864,43 @@ func (p *Parser) parseExpr() Expr {
 }
 
 func (p *Parser) parsePipe() Expr {
-	expr := p.parseRelational()
+	expr := p.parseLogicalOr()
 	for {
 		tok := p.current()
 		if tok.Type == TokenPipe {
 			p.pos++
-			right := p.parseRelational()
+			right := p.parseLogicalOr()
 			expr = &PipeExpr{Left: expr, Right: right}
+		} else {
+			break
+		}
+	}
+	return expr
+}
+
+func (p *Parser) parseLogicalOr() Expr {
+	expr := p.parseLogicalAnd()
+	for {
+		tok := p.current()
+		if tok.Type == TokenOr {
+			p.pos++
+			right := p.parseLogicalAnd()
+			expr = &BinaryExpr{Op: tok.Type, Left: expr, Right: right}
+		} else {
+			break
+		}
+	}
+	return expr
+}
+
+func (p *Parser) parseLogicalAnd() Expr {
+	expr := p.parseRelational()
+	for {
+		tok := p.current()
+		if tok.Type == TokenAnd {
+			p.pos++
+			right := p.parseRelational()
+			expr = &BinaryExpr{Op: tok.Type, Left: expr, Right: right}
 		} else {
 			break
 		}
@@ -1591,6 +1627,9 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 			} else if isComparisonOp(e.Op) {
 				e.Type = BasicType("bool")
 				return BasicType("bool"), nil
+			} else if leftTy == BasicType("bool") && isLogicalOp(e.Op) {
+				e.Type = BasicType("bool")
+				return BasicType("bool"), nil
 			} else if leftTy == BasicType("string") && e.Op == TokenPlus {
 				e.Type = BasicType("string")
 				return BasicType("string"), nil
@@ -2288,6 +2327,15 @@ func isNumberOp(op TokenType) bool {
 func isComparisonOp(op TokenType) bool {
 	switch op {
 	case TokenGT, TokenLT, TokenGTE, TokenLTE, TokenEQ, TokenNeq:
+		return true
+	default:
+		return false
+	}
+}
+
+func isLogicalOp(op TokenType) bool {
+	switch op {
+	case TokenAnd, TokenOr:
 		return true
 	default:
 		return false

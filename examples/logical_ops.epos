@@ -1,0 +1,30 @@
+# Test logical operators and and or
+
+fn test-and(): bool
+    true and true
+end
+
+fn test-or(): bool
+    false or true
+end
+
+fn test-complex(): bool
+    (true and false) or (true and true)
+end
+
+# Test with variables
+x: bool = true
+y: bool = false
+
+result1: bool = x and y
+result2: bool = x or y
+result3: bool = not x and y
+result4: bool = x and not y
+
+print(test-and())
+print(test-or())
+print(test-complex())
+print(result1)
+print(result2)
+print(result3)
+print(result4)

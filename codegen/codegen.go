@@ -1049,6 +1049,14 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 				panic("unknown float operator")
 			}
 		} else if e.Type == parser.BasicType("bool") {
+			// Handle logical operations first
+			switch e.Op {
+			case parser.TokenAnd:
+				return bb.NewAnd(left, right), bb
+			case parser.TokenOr:
+				return bb.NewOr(left, right), bb
+			}
+			
 			// Handle comparisons - check if operands are floats
 			if left.Type() == types.Double || right.Type() == types.Double {
 				var pred enum.FPred
