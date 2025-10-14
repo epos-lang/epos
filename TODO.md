@@ -36,8 +36,8 @@
   - Example (read file): `file: file-type = open-file("text.txt")
     text: string = read-file(file)
     close-file(file)`
-- [!] Add builtin functions for getting command line arguments (example: `arg_list: list(string) = args()`)
-- [.] Add lambda expressions (example: `fn(x: int): int => x + 1`)
+- [x] Add builtin functions for getting command line arguments (example: `arg_list: list(string) = args()`)
+- [x] Add lambda expressions (example: `fn(x: int): int => x + 1`)
 - [ ] Add `_` as a discard variable name (example: `_: int = 1 #=> _ is discarded` or `_list_of_nums: list(int) = {1, 2}`)
 - Ideas:?
   - [?] Change multi-line comments to use `(#`/`#)`

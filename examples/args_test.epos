@@ -1,9 +1,23 @@
 # Test command line arguments
+import {each} from "./each.epos"
+
+fn print-arg(arg: string)
+  print(arg)
+end
+
 fn main()
-    arguments: list(string) = args()
-    count: int = len(arguments)
-    print(count)
-    
-    # This will currently print 0 since args() returns empty list
-    # In a full implementation, we would pass argc/argv to main
+  arguments: list(string) = args()
+  count: int = len(arguments)
+  print("Arguments count:")
+  print(count)
+
+  # Check if we have arguments
+  msg: string = match count > 0 then
+      true -> "Has arguments"
+      false -> "No arguments"
+  end
+  print(msg)
+
+  arguments
+  |> each(print-arg)
 end
