@@ -1,0 +1,28 @@
+# Test the modulo operator
+
+# Basic modulo tests
+a: int = 7 % 3
+b: int = 10 % 4
+c: int = 15 % 5
+d: int = 3 % 2
+
+print("7 % 3 =")
+print(a)
+
+print("10 % 4 =")
+print(b)
+
+print("15 % 5 =")
+print(c)
+
+print("3 % 2 =")
+print(d)
+
+# Test the example from the request: 3 % 2 == 0
+result: bool = (3 % 2) == 0
+msg: string = match result then
+    true -> "3 % 2 equals 0"
+    false -> "3 % 2 does not equal 0"
+    _ -> "unexpected"
+end
+print(msg)

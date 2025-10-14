@@ -1032,6 +1032,8 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 				return bb.NewMul(left, right), bb
 			case parser.TokenDiv:
 				return bb.NewSDiv(left, right), bb
+			case parser.TokenMod:
+				return bb.NewSRem(left, right), bb
 			default:
 				panic("unknown integer operator")
 			}
@@ -1045,6 +1047,8 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 				return bb.NewFMul(left, right), bb
 			case parser.TokenDiv:
 				return bb.NewFDiv(left, right), bb
+			case parser.TokenMod:
+				return bb.NewFRem(left, right), bb
 			default:
 				panic("unknown float operator")
 			}

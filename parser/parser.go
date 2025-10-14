@@ -20,6 +20,7 @@ const (
 	TokenPlus
 	TokenMinus
 	TokenDiv
+	TokenMod
 	TokenAssign
 
 	TokenSemicolon
@@ -339,6 +340,8 @@ func (l *Lexer) Lex() []Token {
 			}
 		case ch == '/':
 			l.addToken(TokenDiv, "/")
+		case ch == '%':
+			l.addToken(TokenMod, "%")
 		case ch == '=':
 			if l.peekChar() == '=' {
 				l.pos++
@@ -937,7 +940,7 @@ func (p *Parser) parseMultiplicative() Expr {
 	expr := p.parseUnary()
 	for {
 		tok := p.current()
-		if tok.Type == TokenMul || tok.Type == TokenDiv {
+		if tok.Type == TokenMul || tok.Type == TokenDiv || tok.Type == TokenMod {
 			p.pos++
 			right := p.parsePrimary()
 			expr = &BinaryExpr{Op: tok.Type, Left: expr, Right: right}
@@ -2317,7 +2320,7 @@ func resolveTypes(expr Expr, ty Type) {
 
 func isNumberOp(op TokenType) bool {
 	switch op {
-	case TokenPlus, TokenMinus, TokenMul, TokenDiv:
+	case TokenPlus, TokenMinus, TokenMul, TokenDiv, TokenMod:
 		return true
 	default:
 		return false
