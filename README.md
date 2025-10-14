@@ -57,7 +57,7 @@ person: Person = @{
 ```
 
 ## Getting Started
-- Run `nix build github:silent-brad/epos`. The compiler will now located in `./result/bin/epos`
+- Run `nix build github:epos-lang/epos`. The compiler will now located in `./result/bin/epos`
 Create a file ending in `.epos` with `print([[Hello world!]])` and run `epos <filename>`
 
 ## Notes:
