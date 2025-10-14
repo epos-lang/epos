@@ -928,29 +928,16 @@ func (p *Parser) parseType() Type {
 		p.consume(TokenLParen)
 		var params []Type
 		if p.current().Type != TokenRParen {
-			// Check if this is the new syntax with parameter names
-			if p.peek().Type == TokenColon {
-				// Parse parameter name and type: param_name: type
-				p.consume(TokenIdentifier) // consume parameter name
-				p.consume(TokenColon)
+			// Function type syntax: fn(int, string) -> bool
+			// Only types, no parameter names
+			params = append(params, p.parseType())
+			for p.current().Type == TokenComma {
+				p.pos++
 				params = append(params, p.parseType())
-				for p.current().Type == TokenComma {
-					p.pos++
-					p.consume(TokenIdentifier) // consume parameter name
-					p.consume(TokenColon)
-					params = append(params, p.parseType())
-				}
-			} else {
-				// Old syntax: just types
-				params = append(params, p.parseType())
-				for p.current().Type == TokenComma {
-					p.pos++
-					params = append(params, p.parseType())
-				}
 			}
 		}
 		p.consume(TokenRParen)
-		p.consume(TokenColon)
+		p.consume(TokenArrow)
 		ret := p.parseType()
 		return FunctionType{Params: params, Return: ret}
 	} else {
@@ -1348,6 +1335,7 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 		if err != nil {
 			return nil, err
 		}
+
 		if tc.equalTypes(leftTy, rightTy) {
 			if leftTy == BasicType("int") && isNumberOp(e.Op) {
 				e.Type = BasicType("int")
@@ -1358,6 +1346,18 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 			} else if leftTy == BasicType("string") && e.Op == TokenPlus {
 				e.Type = BasicType("string")
 				return BasicType("string"), nil
+			} else if _, ok := leftTy.(GenericType); ok && isNumberOp(e.Op) {
+				// For generic types, allow numeric operations and return the same generic type
+				e.Type = leftTy
+				return leftTy, nil
+			} else if _, ok := leftTy.(GenericType); ok && e.Op == TokenPlus {
+				// For generic types, allow + operation (could be string concat or numeric add)
+				e.Type = leftTy
+				return leftTy, nil
+			} else if _, ok := leftTy.(GenericType); ok && isComparisonOp(e.Op) {
+				// For generic types, allow comparison operations and return bool
+				e.Type = BasicType("bool")
+				return BasicType("bool"), nil
 			}
 		}
 		return nil, fmt.Errorf("type mismatch in binary expression")
@@ -1668,18 +1668,55 @@ func (tc *TypeChecker) equalTypes(a, b Type) bool {
 	return false
 }
 
+// resolveGenericType follows type variable mappings to find the concrete type
+func (tc *TypeChecker) resolveGenericType(t Type, typeMap map[string]Type) Type {
+	visited := make(map[string]bool)
+	for {
+		if generic, ok := t.(GenericType); ok {
+			if visited[generic.Name] {
+				// Cycle detected, return the generic type as-is
+				return t
+			}
+			if mapped, exists := typeMap[generic.Name]; exists {
+				visited[generic.Name] = true
+				t = mapped
+				continue
+			}
+		}
+		return t
+	}
+}
+
 // Unify two types, handling generic type variables
 func (tc *TypeChecker) unifyTypes(expected, actual Type, typeMap map[string]Type) (Type, error) {
 	switch expectedType := expected.(type) {
 	case GenericType:
-		// If this generic type is already mapped, check consistency
-		if mapped, exists := typeMap[expectedType.Name]; exists {
-			if tc.equalTypes(mapped, actual) {
-				return actual, nil
+		// Resolve the expected type to its concrete type if already mapped
+		resolvedExpected := tc.resolveGenericType(expected, typeMap)
+		if resolvedExpected != expected {
+			// Expected type resolves to something else, only continue if it's not a generic
+			if _, isGeneric := resolvedExpected.(GenericType); !isGeneric {
+				return tc.unifyTypes(resolvedExpected, actual, typeMap)
 			}
-			return nil, fmt.Errorf("type variable %s already unified to %v, cannot unify with %v", expectedType.Name, mapped, actual)
 		}
-		// Map the generic type to the actual type
+		
+		// If actual is also a generic type, resolve it too
+		if _, ok := actual.(GenericType); ok {
+			resolvedActual := tc.resolveGenericType(actual, typeMap)
+			if resolvedActual != actual {
+				// Actual type resolves to something else, only continue if it's not a generic
+				if _, isGeneric := resolvedActual.(GenericType); !isGeneric {
+					return tc.unifyTypes(expected, resolvedActual, typeMap)
+				}
+			}
+			// Both are generic types - map them to each other if not already mapped
+			if _, exists := typeMap[expectedType.Name]; !exists {
+				typeMap[expectedType.Name] = actual
+			}
+			return actual, nil
+		}
+		
+		// Map the generic type to the actual concrete type
 		typeMap[expectedType.Name] = actual
 		return actual, nil
 	case ListType:

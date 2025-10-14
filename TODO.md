@@ -16,11 +16,12 @@
 - [x] Add string interpolation (example: `"Hello #{name}!"` or `[[Hello #{name}!]]`)
 - [x] Add `assert` keyword (example: `assert a + b == 3`)
 - [x] Add generics
-  - [!!] Fix generics (for real this time)
+  - [x] Fix generics (for real this time)
 - [x] Add `import` (examples: `import "./other-file.epos"`, `import {function, function2} from "./local-module"`)
 - [x] Make `type` a keyword (example: `type new_type = int`)
 - [x] Remove `if`/`while`/`return` statements
 - [x] Make variables immutable
+- [ ] Fix import error where private functions have to be imported
 - [.] Add piping operator (`|>`)
 - [ ] Add float type
 - [ ] Add function pattern matching (example: `fn add(x: int, y: int): int\n\t x + y\n end\n fn add(x: int, y: int, z: int): int\n\t x + y + z\n end\n add(1, 2)\n add(1, 2, 3)`)

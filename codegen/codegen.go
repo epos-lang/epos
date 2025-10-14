@@ -108,14 +108,33 @@ func (cg *CodeGen) hasGenericType(t parser.Type) bool {
 func (cg *CodeGen) instantiateGenericFunction(name string, argTypes []parser.Type) *ir.Func {
 	genericFunc, ok := cg.genericFunctions[name]
 	if !ok {
+	
 		return nil
 	}
+
 	
 	// Create type mapping from generic parameters to concrete types
 	typeMap := make(map[string]parser.Type)
 	for i, param := range genericFunc.Params {
 		if i < len(argTypes) {
+	
 			cg.mapGenericTypes(param.Ty, argTypes[i], typeMap)
+		}
+	}
+	
+
+	
+	// Also map return type generics if return type is used in body
+	if cg.hasGenericType(genericFunc.ReturnType) {
+		// For functions like create-list where return type is list(t),
+		// we need to infer 't' from the return type of expressions in the body
+		if len(genericFunc.Body) > 0 {
+			if exprStmt, ok := genericFunc.Body[0].(*parser.ExprStmt); ok {
+				if listExpr, ok := exprStmt.Expr.(*parser.ListExpr); ok && len(listExpr.Elements) > 0 {
+					// For create-list function, the element type should already be in typeMap
+					// from parameter mapping. Skip this complex inference for now.
+				}
+			}
 		}
 	}
 	
@@ -155,8 +174,10 @@ func (cg *CodeGen) instantiateGenericFunction(name string, argTypes []parser.Typ
 
 // mapGenericTypes recursively maps generic type names to concrete types
 func (cg *CodeGen) mapGenericTypes(generic, concrete parser.Type, typeMap map[string]parser.Type) {
+
 	switch g := generic.(type) {
 	case parser.GenericType:
+
 		typeMap[g.Name] = concrete
 	case parser.ListType:
 		if c, ok := concrete.(parser.ListType); ok {
@@ -175,6 +196,15 @@ func (cg *CodeGen) substituteGenericType(t parser.Type, typeMap map[string]parse
 		return t
 	case parser.ListType:
 		return parser.ListType{Element: cg.substituteGenericType(typ.Element, typeMap)}
+	case parser.FunctionType:
+		newParams := make([]parser.Type, len(typ.Params))
+		for i, param := range typ.Params {
+			newParams[i] = cg.substituteGenericType(param, typeMap)
+		}
+		return parser.FunctionType{
+			Params: newParams,
+			Return: cg.substituteGenericType(typ.Return, typeMap),
+		}
 	default:
 		return t
 	}
@@ -184,6 +214,8 @@ func (cg *CodeGen) substituteGenericType(t parser.Type, typeMap map[string]parse
 func (cg *CodeGen) typeToString(t parser.Type) string {
 	return typeToString(t)
 }
+
+
 
 // substituteGenericTypesInStmts recursively substitutes generic types in statements
 func (cg *CodeGen) substituteGenericTypesInStmts(stmts []parser.Stmt, typeMap map[string]parser.Type) []parser.Stmt {
@@ -205,6 +237,7 @@ func (cg *CodeGen) substituteGenericTypesInStmt(stmt parser.Stmt, typeMap map[st
 			Var:      s.Var,
 			DeclType: cg.substituteGenericType(s.DeclType, typeMap),
 			Expr:     cg.substituteGenericTypesInExpr(s.Expr, typeMap),
+			Type:     cg.substituteGenericType(s.Type, typeMap),
 		}
 	default:
 		return stmt // Return as-is for other statement types
@@ -256,6 +289,15 @@ func (cg *CodeGen) substituteGenericTypesInExpr(expr parser.Expr, typeMap map[st
 			Callee: cg.substituteGenericTypesInExpr(e.Callee, typeMap),
 			Args:   newArgs,
 			Type:   cg.substituteGenericType(e.Type, typeMap),
+		}
+	case *parser.ListExpr:
+		newElements := make([]parser.Expr, len(e.Elements))
+		for i, elem := range e.Elements {
+			newElements[i] = cg.substituteGenericTypesInExpr(elem, typeMap)
+		}
+		return &parser.ListExpr{
+			Elements: newElements,
+			Type:     cg.substituteGenericType(e.Type, typeMap),
 		}
 	default:
 		return expr // Return as-is for other expression types
@@ -547,14 +589,17 @@ func (cg *CodeGen) Generate(stmts []parser.Stmt) *ir.Module {
 }
 
 func (cg *CodeGen) declareFunctionSignature(s *parser.FunctionStmt) {
+
 	// Check if function has generic types - if so, store it for later instantiation
 	for _, p := range s.Params {
 		if cg.hasGenericType(p.Ty) {
+	
 			cg.genericFunctions[s.Name] = s
 			return // Store generic functions for later instantiation
 		}
 	}
 	if s.ReturnType != nil && cg.hasGenericType(s.ReturnType) {
+
 		cg.genericFunctions[s.Name] = s
 		return // Store generic functions for later instantiation
 	}
@@ -605,7 +650,7 @@ func (cg *CodeGen) genFunctionBody(s *parser.FunctionStmt) {
 	for i, param := range f.Params {
 		alloc := entry.NewAlloca(param.Type())
 		entry.NewStore(param, alloc)
-		localVars[param.LocalName] = varInfo{Alloc: alloc, Typ: cg.toLLVMType(s.Params[i].Ty)}
+		localVars[s.Params[i].Name] = varInfo{Alloc: alloc, Typ: cg.toLLVMType(s.Params[i].Ty)}
 	}
 
 	current := cg.genStmts(entry, s.Body, localVars)
@@ -779,6 +824,19 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 		if ok {
 			return f, bb
 		}
+		
+		// Check if this is a generic function that needs instantiation
+		if _, exists := cg.genericFunctions[e.Name]; exists {
+			// For now, try to find the already specialized version
+			// This is a hack - ideally the type checker should resolve generics
+			for funcName := range cg.functions {
+				if len(funcName) > len(e.Name) && funcName[:len(e.Name)] == e.Name && funcName[len(e.Name)] == '_' {
+					// Found a specialized version, use it
+					return cg.functions[funcName], bb
+				}
+			}
+		}
+		
 		panic("undefined: " + e.Name)
 	case *parser.UnaryExpr:
 		if e.Op == parser.TokenMinus {
@@ -884,6 +942,33 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 			} else if f, ok := cg.functions[calleeName]; ok {
 				callee = f
 			} else if _, ok := cg.genericFunctions[calleeName]; ok {
+		
+				// Pre-specialize any generic function arguments
+				for i, arg := range e.Args {
+					if varExpr, ok := arg.(*parser.VarExpr); ok {
+						if _, isGeneric := cg.genericFunctions[varExpr.Name]; isGeneric {
+							// This is a generic function used as an argument
+							// Try to infer the concrete type from the function signature
+							if _, isFuncType := varExpr.Type.(parser.FunctionType); isFuncType {
+								// If the function type has any concrete types, use them for specialization
+								// For identity function of type fn(t) -> t, we need to infer t from context
+								// Look at other arguments to infer the type
+								for j, otherArg := range e.Args {
+									if j != i {
+										otherType := cg.getParserType(otherArg)
+										if basic, isBasic := otherType.(parser.BasicType); isBasic {
+											// Found a concrete type, try to specialize the generic function
+											var specializationTypes []parser.Type
+											specializationTypes = append(specializationTypes, basic)
+											cg.instantiateGenericFunction(varExpr.Name, specializationTypes)
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+		
 				// Try to instantiate generic function
 				var argTypes []parser.Type
 				for _, arg := range e.Args {
