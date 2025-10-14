@@ -1,0 +1,9 @@
+# Simple union type test
+type string-or-int = string | int
+
+# Variable assignment test
+fn main*()
+    x: string-or-int = "hello"
+    y: string-or-int = 42
+    "test"
+end

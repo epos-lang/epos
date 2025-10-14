@@ -65,6 +65,7 @@ const (
 	TokenMul
 	TokenTypeKeyword
 	TokenPipe
+	TokenUnion
 	TokenNot
 	TokenNeq
 	TokenAnd
@@ -252,6 +253,18 @@ func (g GenericInstType) String() string {
 	return g.Name + "(" + strings.Join(args, ", ") + ")"
 }
 
+type UnionType struct {
+	Types []Type
+}
+
+func (u UnionType) String() string {
+	typeStrs := make([]string, len(u.Types))
+	for i, t := range u.Types {
+		typeStrs[i] = fmt.Sprintf("%v", t)
+	}
+	return strings.Join(typeStrs, " | ")
+}
+
 type RecordExpr struct {
 	Fields map[string]Expr
 	Type   Type
@@ -414,7 +427,7 @@ func (l *Lexer) Lex() []Token {
 				l.pos++
 				l.addToken(TokenPipe, "|>")
 			} else {
-				panic(fmt.Sprintf("unexpected character: %c", ch))
+				l.addToken(TokenUnion, "|")
 			}
 		default:
 			panic(fmt.Sprintf("unexpected character: %c", ch))
@@ -1141,6 +1154,24 @@ func (p *Parser) parsePrimary() Expr {
 }
 
 func (p *Parser) parseType() Type {
+	return p.parseUnionType()
+}
+
+func (p *Parser) parseUnionType() Type {
+	t := p.parseSingleType()
+	if p.current().Type == TokenUnion {
+		var types []Type
+		types = append(types, t)
+		for p.current().Type == TokenUnion {
+			p.pos++
+			types = append(types, p.parseSingleType())
+		}
+		return UnionType{Types: types}
+	}
+	return t
+}
+
+func (p *Parser) parseSingleType() Type {
 	if p.current().Type == TokenFunction {
 		p.consume(TokenFunction)
 		p.consume(TokenLParen)
@@ -1366,6 +1397,12 @@ func (tc *TypeChecker) resolveType(t Type) Type {
 			typeArgs[i] = tc.resolveType(ty.TypeArgs[i])
 		}
 		return GenericInstType{Name: ty.Name, TypeArgs: typeArgs}
+	case UnionType:
+		resolvedTypes := make([]Type, len(ty.Types))
+		for i, t := range ty.Types {
+			resolvedTypes[i] = tc.resolveType(t)
+		}
+		return UnionType{Types: resolvedTypes}
 	default:
 		return t
 	}
@@ -1536,7 +1573,7 @@ func (tc *TypeChecker) typeCheckStmt(stmt Stmt, env map[string]Type) error {
 				}
 			}
 			
-			if !tc.compatible(ty, declType) {
+			if !tc.compatible(declType, ty) {
 				return fmt.Errorf("type mismatch: expected %v, got %v", declType, ty)
 			}
 			resolveTypes(s.Expr, declType)
@@ -1568,7 +1605,7 @@ func (tc *TypeChecker) typeCheckStmt(stmt Stmt, env map[string]Type) error {
 				if err != nil {
 					return err
 				}
-				if !tc.equalTypes(valTy, matchTy) {
+				if !tc.equalTypes(valTy, matchTy) && !tc.compatible(matchTy, valTy) {
 					return fmt.Errorf("case type mismatch")
 				}
 			}
@@ -1988,7 +2025,7 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 					return nil, err
 				}
 				valTy = tc.resolveType(valTy)
-				if !tc.equalTypes(valTy, matchTy) {
+				if !tc.equalTypes(valTy, matchTy) && !tc.compatible(matchTy, valTy) {
 					return nil, fmt.Errorf("match case type mismatch")
 				}
 			}
@@ -2220,6 +2257,26 @@ func (tc *TypeChecker) equalTypes(a, b Type) bool {
 			}
 			return true
 		}
+	case UnionType:
+		if b1, ok := b.(UnionType); ok {
+			if len(a1.Types) != len(b1.Types) {
+				return false
+			}
+			// Check if all types in a1 are present in b1 (order doesn't matter)
+			for _, aType := range a1.Types {
+				found := false
+				for _, bType := range b1.Types {
+					if tc.equalTypes(aType, bType) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					return false
+				}
+			}
+			return true
+		}
 	}
 	return false
 }
@@ -2304,10 +2361,26 @@ func (tc *TypeChecker) unifyTypes(expected, actual Type, typeMap map[string]Type
 			return FunctionType{Params: unifiedParams, Return: unifiedReturn}, nil
 		}
 		return nil, fmt.Errorf("expected function type, got %v", actual)
+	case UnionType:
+		// Check if actual type is compatible with any type in the union
+		for _, unionType := range expectedType.Types {
+			if _, err := tc.unifyTypes(unionType, actual, typeMap); err == nil {
+				return expected, nil // Return the union type, not the specific unified type
+			}
+		}
+		return nil, fmt.Errorf("type %v is not compatible with union %v", actual, expected)
 	default:
-		// For concrete types, they must match exactly
+		// For concrete types, they must match exactly or be compatible
 		if tc.equalTypes(expected, actual) {
 			return actual, nil
+		}
+		// Check if it can be unified with a union type
+		if unionType, ok := expected.(UnionType); ok {
+			for _, uType := range unionType.Types {
+				if _, err := tc.unifyTypes(uType, actual, typeMap); err == nil {
+					return expected, nil
+				}
+			}
 		}
 		return nil, fmt.Errorf("expected %v, got %v", expected, actual)
 	}
@@ -2414,8 +2487,24 @@ func (tc *TypeChecker) compatible(a, b Type) bool {
 	case GenericType:
 		b1, ok := b.(GenericType)
 		return ok && a1.Name == b1.Name
-
+	case UnionType:
+		// Check if b is compatible with any type in the union
+		for _, unionType := range a1.Types {
+			if tc.compatible(unionType, b) {
+				return true
+			}
+		}
+		return false
 	default:
+		// Check if a is assignable to a union type b
+		if unionType, ok := b.(UnionType); ok {
+			for _, bType := range unionType.Types {
+				if tc.compatible(a, bType) {
+					return true
+				}
+			}
+			return false
+		}
 		return false
 	}
 }

@@ -27,6 +27,7 @@ type CodeGen struct {
 	assertCounter                          int
 	listPrintCounter                       int
 	recordPrintCounter                     int
+	unionPrintCounter                      int
 	fileCounter                            int
 	strlen, strcpy, strcat, malloc, memcpy, strcmp, memcmp, sprintf, exit *ir.Func
 	fopen, fclose, fread, fwrite, fgets, fputs, fflush *ir.Func
@@ -81,11 +82,85 @@ func (cg *CodeGen) toLLVMType(t parser.Type) types.Type {
 	case parser.GenericType:
 		// Generic types should have been resolved during type checking
 		panic(fmt.Sprintf("unresolved generic type: %s", ty.Name))
+	case parser.UnionType:
+		// Union types are represented as tagged unions: struct { i32 tag, ptr data }
+		return types.NewPointer(types.NewStruct(types.I32, types.NewPointer(types.I8)))
 	default:
 		panic("unsupported type")
 		return nil
 	}
 	return nil
+}
+
+func (cg *CodeGen) getUnionTag(unionType parser.UnionType, expr parser.Expr) int {
+	// Determine which type in the union this expression matches
+	switch expr.(type) {
+	case *parser.StringExpr, *parser.InterpolatedStringExpr:
+		// Find string type in union
+		for i, t := range unionType.Types {
+			if basic, ok := t.(parser.BasicType); ok && basic == "string" {
+				return i
+			}
+		}
+	case *parser.NumberExpr:
+		// Find int type in union
+		for i, t := range unionType.Types {
+			if basic, ok := t.(parser.BasicType); ok && basic == "int" {
+				return i
+			}
+		}
+	case *parser.FloatExpr:
+		// Find float type in union
+		for i, t := range unionType.Types {
+			if basic, ok := t.(parser.BasicType); ok && basic == "float" {
+				return i
+			}
+		}
+	case *parser.BoolExpr:
+		// Find bool type in union
+		for i, t := range unionType.Types {
+			if basic, ok := t.(parser.BasicType); ok && basic == "bool" {
+				return i
+			}
+		}
+	}
+	
+	// If we can't determine the tag, use the expression's type field
+	if expr != nil {
+		exprType := cg.getExprType(expr)
+		for i, t := range unionType.Types {
+			if cg.typesEqual(exprType, t) {
+				return i
+			}
+		}
+	}
+	
+	return 0 // Default to first type
+}
+
+func (cg *CodeGen) getExprType(expr parser.Expr) parser.Type {
+	switch e := expr.(type) {
+	case *parser.StringExpr:
+		return e.Type
+	case *parser.NumberExpr:
+		return e.Type
+	case *parser.FloatExpr:
+		return e.Type
+	case *parser.BoolExpr:
+		return e.Type
+	case *parser.VarExpr:
+		return e.Type
+	case *parser.CallExpr:
+		return e.Type
+	default:
+		return parser.BasicType("unknown")
+	}
+}
+
+func (cg *CodeGen) typesEqual(a, b parser.Type) bool {
+	aBasic, aOk := a.(parser.BasicType)
+	bBasic, bOk := b.(parser.BasicType)
+	return aOk && bOk && aBasic == bBasic
 }
 
 func (cg *CodeGen) hasGenericType(t parser.Type) bool {
@@ -104,6 +179,13 @@ func (cg *CodeGen) hasGenericType(t parser.Type) bool {
 	case parser.RecordType:
 		for _, field := range typ.Fields {
 			if cg.hasGenericType(field.Ty) {
+				return true
+			}
+		}
+		return false
+	case parser.UnionType:
+		for _, typ := range typ.Types {
+			if cg.hasGenericType(typ) {
 				return true
 			}
 		}
@@ -724,6 +806,51 @@ func (cg *CodeGen) genPrint(bb *ir.Block, val value.Value, pty parser.Type, vars
 		ptr.InBounds = true
 		bb.NewCall(cg.printf, ptr)
 		return bb
+	case parser.UnionType:
+		// Union types are represented as tagged unions: struct { i32 tag, ptr data }
+		// val should be a pointer to the union struct, not the struct itself
+		structPtr := val
+		structTy := structPtr.Type().(*types.PointerType).ElemType
+		
+		// Get tag field
+		tagPtr := bb.NewGetElementPtr(structTy, structPtr, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
+		tagPtr.InBounds = true
+		tag := bb.NewLoad(types.I32, tagPtr)
+		
+		// Get data pointer field  
+		dataPtrPtr := bb.NewGetElementPtr(structTy, structPtr, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 1))
+		dataPtrPtr.InBounds = true
+		dataPtr := bb.NewLoad(types.NewPointer(types.I8), dataPtrPtr)
+		
+		// Create switch for each variant
+		cg.unionPrintCounter++
+		id := cg.unionPrintCounter
+		afterBB := bb.Parent.NewBlock(fmt.Sprintf("union_after_%d", id))
+		defaultBB := bb.Parent.NewBlock(fmt.Sprintf("union_default_%d", id))
+		switchInst := bb.NewSwitch(tag, defaultBB)
+		
+		ut := pty.(parser.UnionType)
+		for i, variant := range ut.Types {
+			caseBB := bb.Parent.NewBlock(fmt.Sprintf("union_case_%d_%d", id, i))
+			switchInst.Cases = append(switchInst.Cases, ir.NewCase(constant.NewInt(types.I32, int64(i)), caseBB))
+			
+			// Cast the generic pointer back to the specific type
+			variantLLVMTy := cg.toLLVMType(variant)
+			castedPtr := caseBB.NewBitCast(dataPtr, types.NewPointer(variantLLVMTy))
+			variantVal := caseBB.NewLoad(variantLLVMTy, castedPtr)
+			
+			caseBB = cg.genPrint(caseBB, variantVal, variant, vars, addNewline)
+			caseBB.NewBr(afterBB)
+		}
+		
+		// Default case (should never happen with well-formed code)
+		defaultBB = cg.printString(defaultBB, "<invalid union variant>")
+		if addNewline {
+			defaultBB = cg.printString(defaultBB, "\n")
+		}
+		defaultBB.NewBr(afterBB)
+		
+		return afterBB
 	}
 	return bb
 }
@@ -891,7 +1018,51 @@ func (cg *CodeGen) genStmt(bb *ir.Block, stmt parser.Stmt, vars map[string]varIn
 		}
 		alloc = bb.NewAlloca(typ)
 		vars[s.Var] = varInfo{Alloc: alloc, Typ: typ}
-		bb.NewStore(val, alloc)
+		
+		// Handle union types - need to create tagged union
+		if unionType, ok := s.Type.(parser.UnionType); ok {
+			// Create the union value: { tag, data }
+			unionStructType := types.NewStruct(types.I32, types.NewPointer(types.I8))
+			unionAlloc := bb.NewAlloca(unionStructType)
+			
+			// Determine the tag based on the expression type 
+			tag := cg.getUnionTag(unionType, s.Expr)
+			tagPtr := bb.NewGetElementPtr(unionStructType, unionAlloc, constant.NewInt(types.I64, 0), constant.NewInt(types.I32, 0))
+			bb.NewStore(constant.NewInt(types.I32, int64(tag)), tagPtr)
+			
+			// Store the data - need to handle different types properly
+			dataPtr := bb.NewGetElementPtr(unionStructType, unionAlloc, constant.NewInt(types.I64, 0), constant.NewInt(types.I32, 1))
+			
+			var castedData value.Value
+			switch val.Type() {
+			case types.NewPointer(types.I8): // String
+				castedData = val
+			case types.I64: // Integer
+				// Allocate space for the integer and store it
+				intAlloc := bb.NewAlloca(types.I64)
+				bb.NewStore(val, intAlloc)
+				castedData = bb.NewBitCast(intAlloc, types.NewPointer(types.I8))
+			case types.I1: // Boolean
+				// Allocate space for the boolean and store it
+				boolAlloc := bb.NewAlloca(types.I1)
+				bb.NewStore(val, boolAlloc)
+				castedData = bb.NewBitCast(boolAlloc, types.NewPointer(types.I8))
+			case types.Double: // Float
+				// Allocate space for the float and store it
+				floatAlloc := bb.NewAlloca(types.Double)
+				bb.NewStore(val, floatAlloc)
+				castedData = bb.NewBitCast(floatAlloc, types.NewPointer(types.I8))
+			default:
+				// For other types, try to bitcast directly
+				castedData = bb.NewBitCast(val, types.NewPointer(types.I8))
+			}
+			bb.NewStore(castedData, dataPtr)
+			
+			// Store the union in the target allocation
+			bb.NewStore(unionAlloc, alloc)
+		} else {
+			bb.NewStore(val, alloc)
+		}
 		return bb
 
 	case *parser.ExprStmt:

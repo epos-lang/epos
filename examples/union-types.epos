@@ -1,0 +1,20 @@
+# Union type example
+# Define a union type that can be either string or bool
+type string-or-bool = string | bool
+
+# Define a union type that can be int, float, or string
+type number-or-string = int | string
+
+# Main function to test union types
+fn main*()
+    # Test basic variable assignments with union types
+    x: string-or-bool = "hello"
+    y: string-or-bool = true
+    
+    # Test numeric union
+    a: number-or-string = 42
+    b: number-or-string = "test"
+    
+    # Return a simple string to confirm execution
+    "Union types work!"
+end
