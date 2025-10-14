@@ -1,0 +1,3 @@
+# Simple logical operators test
+result: bool = true and true
+print(result)
