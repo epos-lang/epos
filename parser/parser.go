@@ -1358,6 +1358,11 @@ func NewTypeChecker() *TypeChecker {
 	}), namedTypes: make(map[string]Type)}
 }
 
+// GetNamedTypes returns the named types map
+func (tc *TypeChecker) GetNamedTypes() map[string]Type {
+	return tc.namedTypes
+}
+
 func (tc *TypeChecker) resolveType(t Type) Type {
 	switch ty := t.(type) {
 	case BasicType:

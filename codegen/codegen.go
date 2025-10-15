@@ -19,6 +19,7 @@ type CodeGen struct {
 	functions                              map[string]*ir.Func
 	functionDefinitions                    map[string]*parser.FunctionStmt  // Store all function definitions
 	genericFunctions                       map[string]*parser.FunctionStmt
+	namedTypes                             map[string]parser.Type            // Named types from type checker
 	printf                                 *ir.Func
 	globalFmt                              *ir.Global
 	strFmt                                 *ir.Global
@@ -44,6 +45,10 @@ type varInfo struct {
 }
 
 func (cg *CodeGen) toLLVMType(t parser.Type) types.Type {
+	if t == nil {
+		panic("nil type passed to toLLVMType")
+	}
+	
 	switch ty := t.(type) {
 	case parser.BasicType:
 		if ty == "int" {
@@ -58,6 +63,12 @@ func (cg *CodeGen) toLLVMType(t parser.Type) types.Type {
 			return types.Void
 		} else if ty == "file" {
 			return types.NewPointer(types.I8) // FILE* pointer
+		} else {
+			// Try to resolve as named type
+			if resolved, ok := cg.namedTypes[string(ty)]; ok {
+				return cg.toLLVMType(resolved)
+			}
+			panic(fmt.Sprintf("unsupported basic type: %s", string(ty)))
 		}
 	case parser.FunctionType:
 		var paramTypes []types.Type
@@ -86,10 +97,8 @@ func (cg *CodeGen) toLLVMType(t parser.Type) types.Type {
 		// Union types are represented as tagged unions: struct { i32 tag, ptr data }
 		return types.NewPointer(types.NewStruct(types.I32, types.NewPointer(types.I8)))
 	default:
-		panic("unsupported type")
-		return nil
+		panic(fmt.Sprintf("unsupported type: %T", t))
 	}
-	return nil
 }
 
 func (cg *CodeGen) getUnionTag(unionType parser.UnionType, expr parser.Expr) int {
@@ -543,7 +552,7 @@ func typeToString(t parser.Type) string {
 }
 
 // NewCodeGen creates a new CodeGen
-func NewCodeGen() *CodeGen {
+func NewCodeGen(namedTypes map[string]parser.Type) *CodeGen {
 	m := ir.NewModule()
 
 	printf := m.NewFunc("printf", types.I32, ir.NewParam("", types.NewPointer(types.I8)))
@@ -583,41 +592,116 @@ func NewCodeGen() *CodeGen {
 	globalArgc := m.NewGlobalDef("global_argc", constant.NewInt(types.I32, 0))
 	globalArgv := m.NewGlobalDef("global_argv", constant.NewNull(types.NewPointer(types.NewPointer(types.I8))))
 
-	return &CodeGen{module: m, vars: make(map[string]varInfo), functions: make(map[string]*ir.Func), functionDefinitions: make(map[string]*parser.FunctionStmt), genericFunctions: make(map[string]*parser.FunctionStmt), printf: printf, globalFmt: globalFmt, strFmt: strFmt, matchCounter: 0, stringCounter: 0, listPrintCounter: 0, recordPrintCounter: 0, fileCounter: 0, intToStringCounter: 0, strlen: strlen, strcpy: strcpy, strcat: strcat, malloc: malloc, memcpy: memcpy, strcmp: strcmp, memcmp: memcmp, sprintf: sprintf, exit: exit, fopen: fopen, fclose: fclose, fread: fread, fwrite: fwrite, fgets: fgets, fputs: fputs, fflush: fflush, assertFailMsg: assertFailMsg, globalArgc: globalArgc, globalArgv: globalArgv}
+	return &CodeGen{
+		module: m, 
+		vars: make(map[string]varInfo), 
+		functions: make(map[string]*ir.Func), 
+		functionDefinitions: make(map[string]*parser.FunctionStmt), 
+		genericFunctions: make(map[string]*parser.FunctionStmt), 
+		namedTypes: namedTypes,
+		printf: printf, 
+		globalFmt: globalFmt, 
+		strFmt: strFmt, 
+		matchCounter: 0, 
+		stringCounter: 0, 
+		listPrintCounter: 0, 
+		recordPrintCounter: 0, 
+		fileCounter: 0, 
+		intToStringCounter: 0, 
+		strlen: strlen, 
+		strcpy: strcpy, 
+		strcat: strcat, 
+		malloc: malloc, 
+		memcpy: memcpy, 
+		strcmp: strcmp, 
+		memcmp: memcmp, 
+		sprintf: sprintf, 
+		exit: exit, 
+		fopen: fopen, 
+		fclose: fclose, 
+		fread: fread, 
+		fwrite: fwrite, 
+		fgets: fgets, 
+		fputs: fputs, 
+		fflush: fflush, 
+		assertFailMsg: assertFailMsg, 
+		globalArgc: globalArgc, 
+		globalArgv: globalArgv,
+	}
+}
+
+// resolveType resolves named types to their concrete types
+func (cg *CodeGen) resolveType(t parser.Type) parser.Type {
+	if t == nil {
+		return nil
+	}
+	switch ty := t.(type) {
+	case parser.BasicType:
+		if resolved, ok := cg.namedTypes[string(ty)]; ok {
+			return cg.resolveType(resolved) // Recursively resolve in case of nested named types
+		}
+		return ty
+	case parser.ListType:
+		return parser.ListType{Element: cg.resolveType(ty.Element)}
+	case parser.FunctionType:
+		newParams := make([]parser.Type, len(ty.Params))
+		for i, param := range ty.Params {
+			newParams[i] = cg.resolveType(param)
+		}
+		return parser.FunctionType{
+			Params: newParams,
+			Return: cg.resolveType(ty.Return),
+		}
+	case parser.RecordType:
+		newFields := make([]parser.Field, len(ty.Fields))
+		for i, field := range ty.Fields {
+			newFields[i] = parser.Field{
+				Name:     field.Name,
+				Optional: field.Optional,
+				Ty:       cg.resolveType(field.Ty),
+			}
+		}
+		return parser.RecordType{
+			Fields:     newFields,
+			TypeParams: ty.TypeParams,
+		}
+	default:
+		return ty
+	}
 }
 
 func (cg *CodeGen) getParserType(expr parser.Expr) parser.Type {
 	switch e := expr.(type) {
 	case *parser.NumberExpr:
-		return e.Type
+		return cg.resolveType(e.Type)
 	case *parser.BoolExpr:
-		return e.Type
+		return cg.resolveType(e.Type)
 	case *parser.StringExpr:
-		return e.Type
+		return cg.resolveType(e.Type)
 	case *parser.InterpolatedStringExpr:
-		return e.Type
+		return cg.resolveType(e.Type)
 	case *parser.VarExpr:
-		return e.Type
+		return cg.resolveType(e.Type)
 	case *parser.BinaryExpr:
-		return e.Type
+		return cg.resolveType(e.Type)
 	case *parser.UnaryExpr:
-		return e.Type
+		return cg.resolveType(e.Type)
 	case *parser.CallExpr:
-		return e.Type
+		return cg.resolveType(e.Type)
 	case *parser.MatchExpr:
-		return e.Type
+		return cg.resolveType(e.Type)
 	case *parser.ListExpr:
-		return e.Type
+		return cg.resolveType(e.Type)
 	case *parser.RecordExpr:
-		return e.Type
+		return cg.resolveType(e.Type)
 	case *parser.FieldAccessExpr:
-		return e.Type
+		return cg.resolveType(e.Type)
 	case *parser.FloatExpr:
-		return e.Type
+		return cg.resolveType(e.Type)
 	case *parser.RangeExpr:
-		return e.Type
+		return cg.resolveType(e.Type)
 	case *parser.LambdaExpr:
-		return e.Type
+		return cg.resolveType(e.Type)
 	default:
 		panic("unknown expr type for getParserType")
 	}
@@ -913,7 +997,11 @@ func (cg *CodeGen) declareFunctionSignature(s *parser.FunctionStmt) {
 	
 	var paramList []*ir.Param
 	for _, p := range s.Params {
-		paramList = append(paramList, ir.NewParam(p.Name, cg.toLLVMType(p.Ty)))
+		llvmType := cg.toLLVMType(p.Ty)
+		if llvmType == nil {
+			panic(fmt.Sprintf("toLLVMType returned nil for parameter %s with type %v", p.Name, p.Ty))
+		}
+		paramList = append(paramList, ir.NewParam(p.Name, llvmType))
 	}
 	var rt types.Type = types.Void
 	if s.ReturnType != nil {

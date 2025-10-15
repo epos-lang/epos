@@ -152,7 +152,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	cg := codegen.NewCodeGen()
+	cg := codegen.NewCodeGen(tc.GetNamedTypes())
 	m := cg.Generate(allStmts)
 
 	irStr := m.String()
