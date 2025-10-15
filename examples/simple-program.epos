@@ -4,7 +4,6 @@
 
 fn each(lst: list(t), fun: fn(t), index: int = 0)
   lst.elem(index).fun()
-  print(lst.elem(index))
   match index < len(lst) - 1 then
     true => each(lst, fun, index + 1)
   end
