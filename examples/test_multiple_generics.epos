@@ -8,8 +8,8 @@ end
 fn tail-caller(lst: list(t), n: int): list(t)
   empty-lst: list(t) = {}
   match n then
-    len(lst) -> empty-lst
-    _ -> {elem(lst, n), ..tail-caller(lst, n + 1)}
+    len(lst) => empty-lst
+    _ => {elem(lst, n), ..tail-caller(lst, n + 1)}
   end
 end
 

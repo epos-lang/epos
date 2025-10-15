@@ -1,11 +1,11 @@
 # Higher order functions
 
-add_fn_type: type = fn(int, int) -> int
+add_fn_type: type = fn(int, int) => int
 fn add(a: int, b: int): int
   a + b
 end
 
-fn add_list(add_fn: fn(int, int) -> int, list_of_nums: list(int), num_to_add: int): list(int)
+fn add_list(add_fn: fn(int, int) => int, list_of_nums: list(int), num_to_add: int): list(int)
   {
     add_fn(elem(list_of_nums, 0), num_to_add),
     add_fn(elem(list_of_nums, 1), num_to_add),

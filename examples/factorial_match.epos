@@ -1,7 +1,7 @@
 fn factorial(n: int): int
   match n then
-    0 -> 1
-    _ -> n * factorial(n - 1)
+    0 => 1
+    _ => n * factorial(n - 1)
   end
 end
 

@@ -1,7 +1,7 @@
 fn fact(n: int): int
   result = match n == 0 then
-    true -> 1
-    false -> n * fact(n - 1)
+    true => 1
+    false => n * fact(n - 1)
   end
   result
 end

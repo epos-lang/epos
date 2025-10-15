@@ -1,12 +1,12 @@
 # Filters over a list
-fn filter*(lst: list(t), fun: fn(t) -> bool, index: int = 0): list(t)
+fn filter*(lst: list(t), fun: fn(t) => bool, index: int = 0): list(t)
   empty-list: list(t) = {}
   el: t = lst |> elem(index)
   result: list(t) = match index then
-    len(lst) -> empty-list
-    _ -> match fun(el) then
-      true -> {el, ..filter(lst, fun, index + 1)}
-      _ -> filter(lst, fun, index + 1)
+    len(lst) => empty-list
+    _ => match fun(el) then
+      true => {el, ..filter(lst, fun, index + 1)}
+      _ => filter(lst, fun, index + 1)
     end
   end
   result

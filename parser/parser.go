@@ -345,11 +345,7 @@ func (l *Lexer) Lex() []Token {
 			l.lexComment()
 			continue
 		case ch == '-':
-			if l.peekChar() == '>' {
-				l.addToken(TokenArrow, "->")
-			} else {
-				l.addToken(TokenMinus, "-")
-			}
+			l.addToken(TokenMinus, "-")
 		case ch == '*':
 			// Check if this is a visibility marker in function declaration
 			if len(l.tokens) >= 2 && 
@@ -394,7 +390,13 @@ func (l *Lexer) Lex() []Token {
 		case ch == '_':
 			l.addToken(TokenDefault, "_")
 		case ch == '(':
-			l.addToken(TokenLParen, "(")
+			if l.peekChar() == '#' {
+				l.pos++ // skip (
+				l.lexMultiLineComment()
+				continue
+			} else {
+				l.addToken(TokenLParen, "(")
+			}
 		case ch == ')':
 			l.addToken(TokenRParen, ")")
 		case ch == ']':
@@ -423,12 +425,7 @@ func (l *Lexer) Lex() []Token {
 				panic(fmt.Sprintf("unexpected character: %c (use 'not' keyword instead)", ch))
 			}
 		case ch == '|':
-			if l.peekChar() == '>' {
-				l.pos++
-				l.addToken(TokenPipe, "|>")
-			} else {
-				l.addToken(TokenUnion, "|")
-			}
+			l.addToken(TokenUnion, "|")
 		default:
 			panic(fmt.Sprintf("unexpected character: %c", ch))
 		}
@@ -438,31 +435,35 @@ func (l *Lexer) Lex() []Token {
 }
 
 func (l *Lexer) lexComment() {
-	l.pos++ // skip #
-	if l.pos < len(l.input) && l.input[l.pos] == '[' {
-		l.pos++ // skip [
-		depth := 1
-		for l.pos < len(l.input) {
-			if l.pos+1 < len(l.input) {
-				if l.input[l.pos] == '#' && l.input[l.pos+1] == '[' {
-					depth++
-					l.pos += 2
-					continue
-				} else if l.input[l.pos] == ']' && l.input[l.pos+1] == '#' {
-					depth--
-					l.pos += 2
-					if depth == 0 {
-						return
-					}
-					continue
-				}
-			}
-			l.pos++
-		}
-	} else {
+	if l.input[l.pos] == '#' {
+		l.pos++ // skip #
+		// Single line comment
 		for l.pos < len(l.input) && l.input[l.pos] != '\n' {
 			l.pos++
 		}
+	}
+}
+
+func (l *Lexer) lexMultiLineComment() {
+	// Called when we've seen (# already
+	l.pos++ // skip #
+	depth := 1
+	for l.pos < len(l.input) {
+		if l.pos+1 < len(l.input) {
+			if l.input[l.pos] == '(' && l.input[l.pos+1] == '#' {
+				depth++
+				l.pos += 2
+				continue
+			} else if l.input[l.pos] == '#' && l.input[l.pos+1] == ')' {
+				depth--
+				l.pos += 2
+				if depth == 0 {
+					return
+				}
+				continue
+			}
+		}
+		l.pos++
 	}
 }
 
@@ -619,8 +620,8 @@ func (l *Lexer) lexNumber() {
 		l.pos++
 	}
 	
-	// Check for decimal point (but not if it's followed by another dot for ranges)
-	if l.pos < len(l.input) && l.input[l.pos] == '.' && l.peekChar() != '.' {
+	// Check for decimal point (but not if it's followed by another dot for ranges or letters for method calls)
+	if l.pos < len(l.input) && l.input[l.pos] == '.' && l.peekChar() != '.' && unicode.IsDigit(rune(l.peekChar())) {
 		hasDecimal = true
 		l.pos++ // consume the '.'
 		
@@ -843,7 +844,7 @@ func (p *Parser) parseMatch() *MatchStmt {
 	for p.current().Type != TokenEnd {
 		if p.current().Type == TokenDefault {
 			p.consume(TokenDefault)
-			p.consume(TokenArrow)
+			p.consume(TokenFatArrow)
 			defaultStmt = p.parseStmt()
 			break
 		} else {
@@ -853,7 +854,7 @@ func (p *Parser) parseMatch() *MatchStmt {
 				p.pos++
 				values = append(values, p.parseExpr())
 			}
-			p.consume(TokenArrow)
+			p.consume(TokenFatArrow)
 			body := p.parseStmt()
 			cases = append(cases, MatchCase{Values: values, Body: body})
 		}
@@ -886,22 +887,7 @@ func (p *Parser) parseRelational() Expr {
 }
 
 func (p *Parser) parseExpr() Expr {
-	return p.parsePipe()
-}
-
-func (p *Parser) parsePipe() Expr {
-	expr := p.parseLogicalOr()
-	for {
-		tok := p.current()
-		if tok.Type == TokenPipe {
-			p.pos++
-			right := p.parseLogicalOr()
-			expr = &PipeExpr{Left: expr, Right: right}
-		} else {
-			break
-		}
-	}
-	return expr
+	return p.parseLogicalOr()
 }
 
 func (p *Parser) parseLogicalOr() Expr {
@@ -1034,20 +1020,20 @@ func (p *Parser) parsePrimary() Expr {
 		var defaultExpr Expr
 		for p.current().Type != TokenEnd {
 			if p.current().Type == TokenDefault {
-				p.consume(TokenDefault)
-				p.consume(TokenArrow)
-				defaultExpr = p.parseExpr()
-				break
+			p.consume(TokenDefault)
+			p.consume(TokenFatArrow)
+			defaultExpr = p.parseExpr()
+			break
 			} else {
-				var values []Expr
-				values = append(values, p.parseExpr())
-				for p.current().Type == TokenComma {
-					p.pos++
-					values = append(values, p.parseExpr())
-				}
-				p.consume(TokenArrow)
-				body := p.parseExpr()
-				cases = append(cases, MatchCaseExpr{Values: values, Body: body})
+			var values []Expr
+			values = append(values, p.parseExpr())
+			for p.current().Type == TokenComma {
+			p.pos++
+			values = append(values, p.parseExpr())
+			}
+			p.consume(TokenFatArrow)
+			body := p.parseExpr()
+			cases = append(cases, MatchCaseExpr{Values: values, Body: body})
 			}
 		}
 		p.consume(TokenEnd)
@@ -1137,10 +1123,6 @@ func (p *Parser) parsePrimary() Expr {
 			}
 			p.consume(TokenRParen)
 			expr = &CallExpr{Callee: expr, Args: args}
-		} else if p.current().Type == TokenDot {
-			p.pos++
-			field := p.consume(TokenIdentifier).Value
-			expr = &FieldAccessExpr{Receiver: expr, Field: field}
 		} else if p.current().Type == TokenLBracket {
 			p.pos++
 			fieldTok := p.consume(TokenString)
@@ -1188,8 +1170,8 @@ func (p *Parser) parseSingleType() Type {
 		p.consume(TokenRParen)
 		// Check if there's an arrow for return type, if not it's a void function
 		var ret Type
-		if p.current().Type == TokenArrow {
-			p.consume(TokenArrow)
+		if p.current().Type == TokenFatArrow {
+			p.consume(TokenFatArrow)
 			ret = p.parseType()
 		} else {
 			ret = BasicType("void")
@@ -1278,7 +1260,32 @@ func (p *Parser) parseDot() Expr {
 		if tok.Type == TokenDot {
 			p.pos++
 			field := p.consume(TokenIdentifier).Value
-			expr = &FieldAccessExpr{Receiver: expr, Field: field}
+			
+			// Check if this is a uniform function call: expr.func(args)
+			if p.current().Type == TokenLParen {
+				p.pos++
+				var args []Expr
+				args = append(args, expr) // First argument is the receiver
+				
+				// Parse remaining arguments
+				if p.current().Type != TokenRParen {
+					args = append(args, p.parseExpr())
+					for p.current().Type == TokenComma {
+						p.pos++
+						args = append(args, p.parseExpr())
+					}
+				}
+				p.consume(TokenRParen)
+				
+				// Create a function call with the field name as the function
+				expr = &CallExpr{
+					Callee: &VarExpr{Name: field},
+					Args:   args,
+				}
+			} else {
+				// Regular field access
+				expr = &FieldAccessExpr{Receiver: expr, Field: field}
+			}
 		} else if tok.Type == TokenLBracket {
 			p.pos++
 			fieldTok := p.consume(TokenString)

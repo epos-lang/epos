@@ -21,8 +21,8 @@ print(d)
 # Test the example from the request: 3 % 2 == 0
 result: bool = (3 % 2) == 0
 msg: string = match result then
-    true -> "3 % 2 equals 0"
-    false -> "3 % 2 does not equal 0"
-    _ -> "unexpected"
+    true => "3 % 2 equals 0"
+    false => "3 % 2 does not equal 0"
+    _ => "unexpected"
 end
 print(msg)

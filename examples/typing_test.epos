@@ -7,8 +7,8 @@ print(add(1, 2))
 
 fn fact(n: int): int
   result: int = match n == 0 then
-    true -> 1
-    false -> n * fact(n - 1)
+    true => 1
+    false => n * fact(n - 1)
   end
   result
 end
@@ -58,5 +58,5 @@ print(Persons_Type)
 }
 print(persons)]#
 
-add_fn_type: type = fn(int, int) -> int
+add_fn_type: type = fn(int, int) => int
 print(add_fn_type)

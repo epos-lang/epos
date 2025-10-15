@@ -18,7 +18,7 @@ end
 
 fn power*(base: int, exp: int): int
   match exp then
-    0 -> 1
-    _ -> base * power(base, exp - 1)
+    0 => 1
+    _ => base * power(base, exp - 1)
   end
 end

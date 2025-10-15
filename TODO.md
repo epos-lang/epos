@@ -39,10 +39,9 @@
 - [x] Add builtin functions for getting command line arguments (example: `arg_list: list(string) = args()`)
 - [x] Add lambda expressions (example: `fn(x: int): int => x + 1`)
 - [x] Add union types (`|`, example: `type string-or-bool = string | bool`)
-- Ideas:?
-  - [?] Change multi-line comments to use `(#`/`#)`
-  - [ ] Add Uniform function call syntax to replace pipes???
-  - [ ] Change match expression to use `=>` instead of `->`??
+- [x] Change multi-line comments to use `(#`/`#)`
+- [x] Add Uniform function call syntax to replace pipes
+- [x] Change match expression to use `=>` instead of `->`
 - [ ] Add `result`/`option`/`some`/`none`/`ok`/`err`/.. types
 - [ ] Add `_` as a discard variable name (example: `_: int = 1 #=> _ is discarded` or `_list_of_nums: list(int) = {1, 2}`)
 - [ ] Array first/last pattern matching (`{first, ..last}`

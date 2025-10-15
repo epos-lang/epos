@@ -13,8 +13,8 @@ fn main()
 
   # Check if we have arguments
   msg: string = match count > 0 then
-      true -> "Has arguments"
-      false -> "No arguments"
+      true => "Has arguments"
+      false => "No arguments"
   end
   print(msg)
 
