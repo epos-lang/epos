@@ -70,7 +70,7 @@ Date: 1846
 
 ## Getting Started
 - Run `nix build github:epos-lang/epos`. The compiler will now located in `./result/bin/epos`
-Create a file ending in `.epos` with `print([[Hello world!]])` and run `epos <filename>`
+- Run `./result/bin/epos init <project-name>` and then in the created directory run `nix develop` or `nix build`
 
 ## Notes:
 - This is in active development
