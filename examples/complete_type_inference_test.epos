@@ -1,0 +1,20 @@
+# Original syntax still works
+explicit_num: int = 1
+explicit_list: list(float) = {1.0, 2.4, 3.4}
+
+# New inference syntax
+num := 1                           # inferred as int
+nums := {1.0, 2.4, 3.4}          # inferred as list(float)
+
+# More inference examples
+name := "Bob"                      # inferred as string
+flag := true                       # inferred as bool
+mixed_nums := {1, 2, 3}           # inferred as list(int)
+
+fn main(): int
+    # Test all variables work correctly
+    local_result := num + explicit_num
+    
+    # Return combined result
+    local_result
+end

@@ -71,6 +71,7 @@ const (
 	TokenAnd
 	TokenOr
 	TokenTypeFile
+	TokenWalrus
 )
 
 // Token struct
@@ -406,7 +407,12 @@ func (l *Lexer) Lex() []Token {
 		case ch == '}':
 			l.addToken(TokenRBrace, "}")
 		case ch == ':':
-			l.addToken(TokenColon, ":")
+			if l.peekChar() == '=' {
+				l.pos++
+				l.addToken(TokenWalrus, ":=")
+			} else {
+				l.addToken(TokenColon, ":")
+			}
 		case ch == '?':
 			l.addToken(TokenQuestion, "?")
 		case ch == '@':
@@ -712,7 +718,7 @@ func (p *Parser) parseStmt() Stmt {
 		return p.parseImport()
 	} else if tok.Type == TokenTypeKeyword {
 		return p.parseTypeAlias()
-	} else if tok.Type == TokenIdentifier && (p.peek().Type == TokenAssign || p.peek().Type == TokenColon) {
+	} else if tok.Type == TokenIdentifier && (p.peek().Type == TokenAssign || p.peek().Type == TokenColon || p.peek().Type == TokenWalrus) {
 		return p.parseAssign()
 	} else if tok.Type == TokenFunction {
 		return p.parseFunction()
@@ -730,11 +736,19 @@ func (p *Parser) parseStmt() Stmt {
 func (p *Parser) parseAssign() *AssignStmt {
 	varName := p.consume(TokenIdentifier).Value
 	var declType Type
+	
 	if p.current().Type == TokenColon {
 		p.pos++
 		declType = p.parseType()
+		p.consume(TokenAssign)
+	} else if p.current().Type == TokenWalrus {
+		p.pos++
+		// Type will be inferred from the expression
+		declType = nil
+	} else {
+		p.consume(TokenAssign)
 	}
-	p.consume(TokenAssign)
+	
 	expr := p.parseExpr()
 	return &AssignStmt{Var: varName, DeclType: declType, Expr: expr}
 }
@@ -1088,12 +1102,8 @@ func (p *Parser) parsePrimary() Expr {
 		fields := make(map[string]Expr)
 		for p.current().Type != TokenRBrace {
 			field := p.consume(TokenIdentifier).Value
-			// Accept both => and : for field assignment
-			if p.current().Type == TokenFatArrow {
-				p.consume(TokenFatArrow)
-			} else {
-				p.consume(TokenColon)
-			}
+			// Only accept => for field assignment in record instances
+			p.consume(TokenFatArrow)
 			fieldExpr := p.parseExpr()
 			fields[field] = fieldExpr
 			if p.current().Type == TokenComma {
@@ -1518,7 +1528,16 @@ func (tc *TypeChecker) typeCheckStmt(stmt Stmt, env map[string]Type) error {
 	case *ImportStmt:
 		return tc.processImport(s, env)
 	case *TypeAliasStmt:
-		tc.namedTypes[s.Name] = tc.resolveType(s.Ty)
+		resolvedTy := tc.resolveType(s.Ty)
+		// Normalize record field ordering to be consistent with record literals
+		if rt, ok := resolvedTy.(RecordType); ok {
+			// Sort fields alphabetically to match record literal field ordering
+			sort.Slice(rt.Fields, func(i, j int) bool {
+				return rt.Fields[i].Name < rt.Fields[j].Name
+			})
+			resolvedTy = rt
+		}
+		tc.namedTypes[s.Name] = resolvedTy
 		return nil
 	case *FunctionStmt:
 		localEnv := make(map[string]Type)
@@ -2293,6 +2312,57 @@ func (tc *TypeChecker) equalTypes(a, b Type) bool {
 	return false
 }
 
+// structurallyCompatible checks if two types are structurally compatible,
+// especially for named record types vs inferred record types with same fields
+func (tc *TypeChecker) structurallyCompatible(expected, actual Type) bool {
+	expected = tc.resolveType(expected)
+	actual = tc.resolveType(actual)
+	
+	// Handle named types by looking up their definitions
+	if expectedBasic, ok := expected.(BasicType); ok {
+		if expectedDef, exists := tc.namedTypes[string(expectedBasic)]; exists {
+			expected = expectedDef
+		}
+	}
+	if actualBasic, ok := actual.(BasicType); ok {
+		if actualDef, exists := tc.namedTypes[string(actualBasic)]; exists {
+			actual = actualDef
+		}
+	}
+	
+	// Check structural compatibility for records
+	expectedRec, expectedIsRec := expected.(RecordType)
+	actualRec, actualIsRec := actual.(RecordType)
+	
+	if expectedIsRec && actualIsRec {
+		// Both are record types - check if they have the same fields
+		if len(expectedRec.Fields) != len(actualRec.Fields) {
+			return false
+		}
+		
+		// Create field maps for comparison (order doesn't matter for structural typing)
+		expectedFields := make(map[string]Field)
+		for _, field := range expectedRec.Fields {
+			expectedFields[field.Name] = field
+		}
+		
+		// Check if all actual fields match expected fields
+		for _, actualField := range actualRec.Fields {
+			expectedField, exists := expectedFields[actualField.Name]
+			if !exists {
+				return false
+			}
+			if actualField.Optional != expectedField.Optional ||
+				!tc.equalTypes(actualField.Ty, expectedField.Ty) {
+				return false
+			}
+		}
+		return true
+	}
+	
+	return false
+}
+
 // resolveGenericType follows type variable mappings to find the concrete type
 func (tc *TypeChecker) resolveGenericType(t Type, typeMap map[string]Type) Type {
 	visited := make(map[string]bool)
@@ -2386,6 +2456,12 @@ func (tc *TypeChecker) unifyTypes(expected, actual Type, typeMap map[string]Type
 		if tc.equalTypes(expected, actual) {
 			return actual, nil
 		}
+		
+		// Check for structural compatibility between named record types and inferred records
+		if tc.structurallyCompatible(expected, actual) {
+			return expected, nil // Return the expected type to maintain named type identity
+		}
+		
 		// Check if it can be unified with a union type
 		if unionType, ok := expected.(UnionType); ok {
 			for _, uType := range unionType.Types {

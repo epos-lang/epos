@@ -1,0 +1,9 @@
+# Simple type inference test
+
+num := 42
+name := "Alice"
+flag := true
+
+fn main(): int
+    num + 10
+end

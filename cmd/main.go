@@ -20,27 +20,27 @@ func parseWithImports(filePath string, visited map[string]bool) ([]parser.Stmt, 
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve path %s: %v", filePath, err)
 	}
-	
+
 	if visited[absPath] {
 		return nil, fmt.Errorf("circular import detected: %s", absPath)
 	}
 	visited[absPath] = true
-	
+
 	// Read and parse the file
 	code, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read file %s: %v", filePath, err)
 	}
-	
+
 	lexer := parser.NewLexer(string(code))
 	tokens := lexer.Lex()
 	p := parser.NewParser(tokens)
 	stmts := p.Parse()
-	
+
 	// Collect all statements, processing imports
 	var allStmts []parser.Stmt
 	baseDir := filepath.Dir(absPath)
-	
+
 	for _, stmt := range stmts {
 		if importStmt, ok := stmt.(*parser.ImportStmt); ok {
 			// Resolve import path relative to current file
@@ -50,13 +50,13 @@ func parseWithImports(filePath string, visited map[string]bool) ([]parser.Stmt, 
 			} else {
 				importPath = filepath.Join(baseDir, importStmt.Path)
 			}
-			
+
 			// Recursively parse imported file
 			importedStmts, err := parseWithImports(importPath, visited)
 			if err != nil {
 				return nil, fmt.Errorf("error parsing import %s: %v", importPath, err)
 			}
-			
+
 			// Add imported statements (only functions needed for compilation)
 			for _, importedStmt := range importedStmts {
 				if funcStmt, ok := importedStmt.(*parser.FunctionStmt); ok {
@@ -80,7 +80,7 @@ func parseWithImports(filePath string, visited map[string]bool) ([]parser.Stmt, 
 			allStmts = append(allStmts, stmt)
 		}
 	}
-	
+
 	return allStmts, nil
 }
 
@@ -332,7 +332,7 @@ func main() {
 			fmt.Printf(" with args: %v", programArgs)
 		}
 		fmt.Println("...")
-		
+
 		// Build command with program arguments
 		cmdArgs := append([]string{"./" + outputFile}, programArgs...)
 		cmd = exec.Command(cmdArgs[0], cmdArgs[1:]...)

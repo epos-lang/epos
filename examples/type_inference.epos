@@ -1,0 +1,41 @@
+# Test type inference with :=
+
+# Integer inference
+num := 42
+
+# Float inference  
+pi := 3.14
+
+# String inference
+name := "Alice"
+
+# Boolean inference
+flag := true
+
+# List inference
+numbers := {1, 2, 3}
+floats := {1.0, 2.5, 3.7}
+
+# Record inference
+record person
+  name: string
+  age: int
+end
+bob := @{name: "Bob", age: 30}
+sally: person = @{name: "Sally", age: 25}
+fn get_name(p: person): string
+  p.name
+end
+bob.get_name().print()
+sally.get_name().print()
+
+fn main(): int
+    # Test all inferred variables
+    result := num + 10
+    
+    # Compare with old syntax still working
+    explicit_num: int = 100
+    final_result := result + explicit_num
+    
+    final_result
+end

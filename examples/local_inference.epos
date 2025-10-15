@@ -1,0 +1,4 @@
+fn main(): int
+    num := 42
+    num + 10
+end

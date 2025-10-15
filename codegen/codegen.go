@@ -30,7 +30,7 @@ type CodeGen struct {
 	recordPrintCounter                     int
 	unionPrintCounter                      int
 	fileCounter                            int
-	strlen, strcpy, strcat, malloc, memcpy, strcmp, memcmp, sprintf, exit *ir.Func
+	strlen, strcpy, strcat, malloc, memcpy, memset, strcmp, memcmp, sprintf, exit *ir.Func
 	fopen, fclose, fread, fwrite, fgets, fputs, fflush *ir.Func
 	intFmt                                 *ir.Global
 	intToStringCounter                     int
@@ -40,7 +40,7 @@ type CodeGen struct {
 }
 
 type varInfo struct {
-	Alloc *ir.InstAlloca
+	Alloc value.Value // Can be *ir.InstAlloca (local) or *ir.Global (global)
 	Typ   types.Type
 }
 
@@ -571,6 +571,7 @@ func NewCodeGen(namedTypes map[string]parser.Type) *CodeGen {
 
 	malloc := m.NewFunc("malloc", types.NewPointer(types.I8), ir.NewParam("", types.I64))
 	memcpy := m.NewFunc("llvm.memcpy.p0i8.p0i8.i64", types.Void, ir.NewParam("dst", types.NewPointer(types.I8)), ir.NewParam("src", types.NewPointer(types.I8)), ir.NewParam("len", types.I64), ir.NewParam("isvolatile", types.I1))
+	memset := m.NewFunc("llvm.memset.p0i8.i64", types.Void, ir.NewParam("dst", types.NewPointer(types.I8)), ir.NewParam("val", types.I8), ir.NewParam("len", types.I64), ir.NewParam("isvolatile", types.I1))
 	strcmp := m.NewFunc("strcmp", types.I32, ir.NewParam("", types.NewPointer(types.I8)), ir.NewParam("", types.NewPointer(types.I8)))
 	memcmp := m.NewFunc("memcmp", types.I32, ir.NewParam("", types.NewPointer(types.I8)), ir.NewParam("", types.NewPointer(types.I8)), ir.NewParam("", types.I64))
 	sprintf := m.NewFunc("sprintf", types.I32, ir.NewParam("", types.NewPointer(types.I8)), ir.NewParam("", types.NewPointer(types.I8)))
@@ -613,6 +614,7 @@ func NewCodeGen(namedTypes map[string]parser.Type) *CodeGen {
 		strcat: strcat, 
 		malloc: malloc, 
 		memcpy: memcpy, 
+		memset: memset, 
 		strcmp: strcmp, 
 		memcmp: memcmp, 
 		sprintf: sprintf, 
@@ -966,7 +968,7 @@ func (cg *CodeGen) Generate(stmts []parser.Stmt) *ir.Module {
 		case *parser.FunctionStmt:
 			cg.genFunctionBody(s)
 		default:
-			entry = cg.genStmt(entry, stmt, cg.vars)
+			entry = cg.genStmtWithGlobal(entry, stmt, cg.vars, true)
 		}
 	}
 	if f, ok := cg.functions["main"]; ok && len(f.Params) == 0 {
@@ -1042,6 +1044,11 @@ func (cg *CodeGen) genFunctionBody(s *parser.FunctionStmt) {
 	}
 
 	localVars := make(map[string]varInfo)
+	// Copy global variables into local scope
+	for name, info := range cg.vars {
+		localVars[name] = info
+	}
+	// Add function parameters
 	for i, param := range f.Params {
 		alloc := entry.NewAlloca(param.Type())
 		entry.NewStore(param, alloc)
@@ -1088,6 +1095,10 @@ func (cg *CodeGen) genFunctionBody(s *parser.FunctionStmt) {
 }
 
 func (cg *CodeGen) genStmt(bb *ir.Block, stmt parser.Stmt, vars map[string]varInfo) *ir.Block {
+	return cg.genStmtWithGlobal(bb, stmt, vars, false)
+}
+
+func (cg *CodeGen) genStmtWithGlobal(bb *ir.Block, stmt parser.Stmt, vars map[string]varInfo, isGlobal bool) *ir.Block {
 	switch s := stmt.(type) {
 	case *parser.ImportStmt:
 		// For now, imports are handled at parse time
@@ -1100,12 +1111,43 @@ func (cg *CodeGen) genStmt(bb *ir.Block, stmt parser.Stmt, vars map[string]varIn
 		// Updated for typed variables
 		val, bb := cg.genExpr(bb, s.Expr, vars)
 		typ := cg.toLLVMType(s.Type)
-		var alloc *ir.InstAlloca
 		if _, ok := vars[s.Var]; ok {
 			panic(fmt.Sprintf("variable %s already defined (variables are immutable)", s.Var))
 		}
-		alloc = bb.NewAlloca(typ)
-		vars[s.Var] = varInfo{Alloc: alloc, Typ: typ}
+		
+		if isGlobal {
+			// Create a global variable
+			var initVal constant.Constant
+			if constVal, ok := val.(constant.Constant); ok {
+				initVal = constVal
+			} else {
+				// For non-constant expressions, initialize to zero and set later
+				switch typ {
+				case types.I64:
+					initVal = constant.NewInt(types.I64, 0)
+				case types.Double:
+					initVal = constant.NewFloat(types.Double, 0.0)
+				case types.I1:
+					initVal = constant.NewBool(false)
+				case types.NewPointer(types.I8):
+					initVal = constant.NewNull(types.NewPointer(types.I8))
+				default:
+					initVal = constant.NewZeroInitializer(typ)
+				}
+			}
+			globalVar := cg.module.NewGlobalDef(s.Var, initVal)
+			vars[s.Var] = varInfo{Alloc: globalVar, Typ: typ}
+			
+			// If the value is not constant, store it now
+			if _, ok := val.(constant.Constant); !ok {
+				bb.NewStore(val, globalVar)
+			}
+		} else {
+			// Local variable
+			alloc := bb.NewAlloca(typ)
+			vars[s.Var] = varInfo{Alloc: alloc, Typ: typ}
+			bb.NewStore(val, alloc)
+		}
 		
 		// Handle union types - need to create tagged union
 		if unionType, ok := s.Type.(parser.UnionType); ok {
@@ -1147,9 +1189,8 @@ func (cg *CodeGen) genStmt(bb *ir.Block, stmt parser.Stmt, vars map[string]varIn
 			bb.NewStore(castedData, dataPtr)
 			
 			// Store the union in the target allocation
-			bb.NewStore(unionAlloc, alloc)
-		} else {
-			bb.NewStore(val, alloc)
+			targetAlloc := vars[s.Var].Alloc
+			bb.NewStore(unionAlloc, targetAlloc)
 		}
 		return bb
 
@@ -2061,7 +2102,22 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 		sizePtr.InBounds = true
 		size := bb.NewPtrToInt(sizePtr, types.I64)
 		malloced := bb.NewCall(cg.malloc, size)
+		// Check if malloc returned null
+		null := constant.NewNull(types.NewPointer(types.I8))
+		isNull := bb.NewICmp(enum.IPredEQ, malloced, null)
+		mallocSuccessBB := bb.Parent.NewBlock("malloc_success")
+		mallocFailBB := bb.Parent.NewBlock("malloc_fail")
+		bb.NewCondBr(isNull, mallocFailBB, mallocSuccessBB)
+		
+		// Handle malloc failure
+		mallocFailBB.NewCall(cg.exit, constant.NewInt(types.I32, 1))
+		mallocFailBB.NewUnreachable()
+		
+		// Handle successful malloc
+		bb = mallocSuccessBB
 		alloc := bb.NewBitCast(malloced, types.NewPointer(structTy))
+		// Zero out the allocated memory to prevent garbage values
+		bb.NewCall(cg.memset, malloced, constant.NewInt(types.I8, 0), size, constant.NewBool(false))
 		fieldIndex := 0
 		rt := e.Type.(parser.RecordType)
 		for _, f := range rt.Fields {
@@ -2089,7 +2145,10 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 	case *parser.FieldAccessExpr:
 		rec, bb := cg.genExpr(bb, e.Receiver, vars)
 		recParserTy := cg.getParserType(e.Receiver)
-		rt := recParserTy.(parser.RecordType)
+		rt, ok := recParserTy.(parser.RecordType)
+		if !ok {
+			panic(fmt.Sprintf("field access on non-record type: %T", recParserTy))
+		}
 		fieldIndex := -1
 		for i, f := range rt.Fields {
 			if f.Name == e.Field {
@@ -2100,12 +2159,34 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 		if fieldIndex == -1 {
 			panic("field not found: " + e.Field)
 		}
-		structTy := rec.Type().(*types.PointerType).ElemType
+		if fieldIndex >= len(rt.Fields) {
+			panic(fmt.Sprintf("field index %d out of bounds for record with %d fields", fieldIndex, len(rt.Fields)))
+		}
+		
+		// Safety check for pointer type
+		recPtrTy, ok := rec.Type().(*types.PointerType)
+		if !ok {
+			panic(fmt.Sprintf("expected pointer type for record, got %T", rec.Type()))
+		}
+		structTy := recPtrTy.ElemType
+		
 		fieldPtr := bb.NewGetElementPtr(structTy, rec, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, int64(fieldIndex)))
 		fieldPtr.InBounds = true
-		val := bb.NewLoad(fieldPtr.Type().(*types.PointerType).ElemType, fieldPtr)
+		
+		// Safety check for field pointer type
+		fieldPtrTy, ok := fieldPtr.Type().(*types.PointerType)
+		if !ok {
+			panic(fmt.Sprintf("expected pointer type for field ptr, got %T", fieldPtr.Type()))
+		}
+		
+		val := bb.NewLoad(fieldPtrTy.ElemType, fieldPtr)
 		if rt.Fields[fieldIndex].Optional {
-			null := constant.NewNull(val.Type().(*types.PointerType))
+			// For optional fields, val is a pointer to the actual value
+			valPtrTy, ok := val.Type().(*types.PointerType)
+			if !ok {
+				panic(fmt.Sprintf("expected pointer type for optional field value, got %T", val.Type()))
+			}
+			null := constant.NewNull(valPtrTy)
 			isNull := bb.NewICmp(enum.IPredEQ, val, null)
 			nullBB := bb.Parent.NewBlock("null_field_" + strconv.Itoa(fieldIndex))
 			loadBB := bb.Parent.NewBlock("load_field_" + strconv.Itoa(fieldIndex))
@@ -2125,7 +2206,7 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 				panic("unsupported type for zero value")
 			}
 			nullBB.NewBr(mergeBB)
-			loaded := loadBB.NewLoad(val.Type().(*types.PointerType).ElemType, val)
+			loaded := loadBB.NewLoad(valPtrTy.ElemType, val)
 			loadBB.NewBr(mergeBB)
 			phi := mergeBB.NewPhi(ir.NewIncoming(zeroVal, nullBB), ir.NewIncoming(loaded, loadBB))
 			return phi, mergeBB
