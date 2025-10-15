@@ -1,4 +1,6 @@
 # Gets the first element of a list
+# Example:
+#   (1..5).head().print()
 fn head*(lst: list(a)): a
-  lst |> elem(0)
+  lst.elem(0)
 end

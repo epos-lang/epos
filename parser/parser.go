@@ -2446,6 +2446,10 @@ func (tc *TypeChecker) compatible(a, b Type) bool {
 		return true
 	}
 	if b == nil {
+		// Allow generic types to be compatible with nil (unresolved placeholders)
+		if _, ok := a.(GenericType); ok {
+			return true
+		}
 		return false
 	}
 	switch a1 := a.(type) {

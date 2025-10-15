@@ -1,6 +1,8 @@
 # Loops over each element in a list
 fn each*(lst: list(t), fun: fn(t), index: int = 0)
-  lst |> elem(index) |> fun()
+  lst
+  .elem(index)
+  .fun()
   match index < len(lst) - 1 then
     true => each(lst, fun, index + 1)
   end

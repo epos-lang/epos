@@ -1,3 +1,7 @@
+# Appends an element to a list.
+# Example:
+#   (1..5).append(6).print()
+
 fn append(appendee: list(t), appended: t): list(t)
   { ..appendee, appended }
 end
