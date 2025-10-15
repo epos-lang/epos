@@ -1,10 +1,13 @@
 package main
 
 import (
+	"archive/zip"
 	"bytes"
 	"epos/codegen"
 	"epos/parser"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -81,10 +84,131 @@ func parseWithImports(filePath string, visited map[string]bool) ([]parser.Stmt, 
 	return allStmts, nil
 }
 
+func initProject(projectName string) error {
+	// Download repository as zip
+	resp, err := http.Get("https://github.com/epos-lang/simple-program-in-epos/archive/master.zip")
+	if err != nil {
+		return fmt.Errorf("failed to download template: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Create temporary file for zip
+	tmpFile, err := os.CreateTemp("", "epos-init-*.zip")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+	defer tmpFile.Close()
+
+	// Download zip content
+	_, err = io.Copy(tmpFile, resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to download zip: %v", err)
+	}
+
+	// Extract zip
+	zipReader, err := zip.OpenReader(tmpFile.Name())
+	if err != nil {
+		return fmt.Errorf("failed to open zip: %v", err)
+	}
+	defer zipReader.Close()
+
+	// Create project directory
+	if err := os.MkdirAll(projectName, 0755); err != nil {
+		return fmt.Errorf("failed to create project directory: %v", err)
+	}
+
+	// Extract files
+	for _, file := range zipReader.File {
+		// Skip the root directory (simple-program-in-epos-master/)
+		parts := strings.Split(file.Name, "/")
+		if len(parts) <= 1 {
+			continue
+		}
+		relativePath := strings.Join(parts[1:], "/")
+		if relativePath == "" {
+			continue
+		}
+
+		destPath := filepath.Join(projectName, relativePath)
+
+		if file.FileInfo().IsDir() {
+			os.MkdirAll(destPath, file.FileInfo().Mode())
+			continue
+		}
+
+		// Create parent directories
+		if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+			return fmt.Errorf("failed to create directory %s: %v", filepath.Dir(destPath), err)
+		}
+
+		// Extract file
+		reader, err := file.Open()
+		if err != nil {
+			return fmt.Errorf("failed to open file in zip: %v", err)
+		}
+
+		outFile, err := os.Create(destPath)
+		if err != nil {
+			reader.Close()
+			return fmt.Errorf("failed to create file %s: %v", destPath, err)
+		}
+
+		_, err = io.Copy(outFile, reader)
+		reader.Close()
+		outFile.Close()
+
+		if err != nil {
+			return fmt.Errorf("failed to write file %s: %v", destPath, err)
+		}
+	}
+
+	// Replace names in files
+	filesToUpdate := []string{
+		filepath.Join(projectName, "README.md"),
+		filepath.Join(projectName, "flake.nix"),
+	}
+
+	for _, filePath := range filesToUpdate {
+		content, err := os.ReadFile(filePath)
+		if err != nil {
+			continue // Skip if file doesn't exist
+		}
+
+		// Replace "simple-program-in-epos" with project name
+		updatedContent := strings.ReplaceAll(string(content), "simple-program-in-epos", projectName)
+		updatedContent = strings.ReplaceAll(updatedContent, "Simple program in Epos", "Simple program in Epos: "+projectName)
+		updatedContent = strings.ReplaceAll(updatedContent, "simple-epos-app", projectName+"-app")
+
+		if err := os.WriteFile(filePath, []byte(updatedContent), 0644); err != nil {
+			return fmt.Errorf("failed to update file %s: %v", filePath, err)
+		}
+	}
+
+	fmt.Printf("Project %s created successfully!\n", projectName)
+	return nil
+}
+
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Println("Usage: epos <input.epos> [-o output] [-r] [program_args...]")
+		fmt.Println("Usage:")
+		fmt.Println("  epos init <project-name>            Create a new Epos project")
+		fmt.Println("  epos <input.epos> [-o output] [-r] [program_args...]   Compile an Epos file")
 		os.Exit(1)
+	}
+
+	// Handle init command
+	if os.Args[1] == "init" {
+		if len(os.Args) < 3 {
+			fmt.Println("Usage: epos init <project-name>")
+			os.Exit(1)
+		}
+		projectName := os.Args[2]
+		if err := initProject(projectName); err != nil {
+			fmt.Printf("Error initializing project: %v\n", err)
+			os.Exit(1)
+		}
+		return
 	}
 
 	var inputFile, outputFile string

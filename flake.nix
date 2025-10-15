@@ -32,7 +32,7 @@
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [ go_1_25 llvm clang ];
           shellHook = ''
-            echo "Run './result/bin/epos *epos_file* -o *output_file*'"
+            echo "Run './result/bin/epos [-r] <epos_file> [-o <output_file>]'"
           '';
         };
       });
