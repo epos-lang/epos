@@ -1,7 +1,7 @@
 # Maps over a list
 # Example:
 #   (1..5).map(fn(x: int): int => x * 2)
-fn map*(lst: list(t), fun: fn(t) => t, index: int = 0): list(t)
+fn map*(lst: list(t), fun: fn(t) -> t, index: int = 0): list(t)
   empty-list: list(t) = {}
   result: list(t) = match index then
     len(lst) => empty-list

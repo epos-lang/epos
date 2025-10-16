@@ -1,7 +1,7 @@
 # Filters over a list
 # Example:
 #   (1..5).filter(fn(x: int): bool => x % 2 == 0)
-fn filter*(lst: list(t), fun: fn(t) => bool, index: int = 0): list(t)
+fn filter*(lst: list(t), fun: fn(t) -> bool, index: int = 0): list(t)
   empty-list: list(t) = {}
   el: t = lst.elem(index)
   result: list(t) = match index then

@@ -3,7 +3,7 @@ fn double(x: int): int
 end
 
 
-fn test_fn(callee: fn(t) => a, arg: t): a
+fn test_fn(callee: fn(t) -> a, arg: t): a
   callee(arg)
 end
 print(test_fn(double, 10))

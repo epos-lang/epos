@@ -3,7 +3,7 @@ fn add(a: c, b: c): c
   a + b
 end
 
-fn higher-order(f: fn(t, t) => t, x: t, y: t): t
+fn higher-order(f: fn(t, t) -> t, x: t, y: t): t
   f(x, y)
 end
 

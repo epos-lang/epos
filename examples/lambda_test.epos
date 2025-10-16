@@ -1,12 +1,12 @@
 # Test lambda expressions
 fn main()
   # Simple lambda that adds 1
-  add_one: fn(int) => int = fn(x: int): int => x + 1
+  add_one: fn(int) -> int = fn(x: int): int => x + 1
   result: int = add_one(5)
   print(result)
 
   # Lambda with no parameters
-  get_answer: fn() => int = fn(): int => 42
+  get_answer: fn() -> int = fn(): int => 42
   answer: int = get_answer()
   print(answer)
 end

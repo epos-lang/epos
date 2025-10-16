@@ -346,7 +346,12 @@ func (l *Lexer) Lex() []Token {
 			l.lexComment()
 			continue
 		case ch == '-':
-			l.addToken(TokenMinus, "-")
+			if l.peekChar() == '>' {
+				l.pos++
+				l.addToken(TokenArrow, "->")
+			} else {
+				l.addToken(TokenMinus, "-")
+			}
 		case ch == '*':
 			// Check if this is a visibility marker in function declaration
 			if len(l.tokens) >= 2 && 
@@ -1180,8 +1185,8 @@ func (p *Parser) parseSingleType() Type {
 		p.consume(TokenRParen)
 		// Check if there's an arrow for return type, if not it's a void function
 		var ret Type
-		if p.current().Type == TokenFatArrow {
-			p.consume(TokenFatArrow)
+		if p.current().Type == TokenArrow {
+			p.consume(TokenArrow)
 			ret = p.parseType()
 		} else {
 			ret = BasicType("void")
