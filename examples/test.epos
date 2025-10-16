@@ -1,3 +1,32 @@
 # test.epos
+(#
+fn higher-order(f: fn(int, int) -> int, x: int, y: int): int
+    f(x, y)
+end
 
-print(1<=5)
+# Use it
+result: int = higher-order(fn(a: int, b: int): int => a + b, 5, 3)  # result is 8
+print(result)
+#)
+
+record Pair(a, b)
+  first: a
+  second: b
+end
+
+fn make-pair(first: a, second: b): Pair(a, b)
+  @{
+    first => first,
+    second => second
+  }
+end
+
+# Usage
+name-age := make-pair("Alice", 30)
+coords := make-pair(10, 20)
+
+(#
+fn compose(f: fn(int, int) -> int, g: fn(int, int) -> int): fn(int, int) -> int
+    fn(x: int, y: int): int => f(g(x, y))
+end
+#)

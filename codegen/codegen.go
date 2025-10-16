@@ -2102,19 +2102,8 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 		sizePtr.InBounds = true
 		size := bb.NewPtrToInt(sizePtr, types.I64)
 		malloced := bb.NewCall(cg.malloc, size)
-		// Check if malloc returned null
-		null := constant.NewNull(types.NewPointer(types.I8))
-		isNull := bb.NewICmp(enum.IPredEQ, malloced, null)
-		mallocSuccessBB := bb.Parent.NewBlock("malloc_success")
-		mallocFailBB := bb.Parent.NewBlock("malloc_fail")
-		bb.NewCondBr(isNull, mallocFailBB, mallocSuccessBB)
 		
-		// Handle malloc failure
-		mallocFailBB.NewCall(cg.exit, constant.NewInt(types.I32, 1))
-		mallocFailBB.NewUnreachable()
-		
-		// Handle successful malloc
-		bb = mallocSuccessBB
+		// Directly cast and use malloc result (assume success for now)
 		alloc := bb.NewBitCast(malloced, types.NewPointer(structTy))
 		// Zero out the allocated memory to prevent garbage values
 		bb.NewCall(cg.memset, malloced, constant.NewInt(types.I8, 0), size, constant.NewBool(false))

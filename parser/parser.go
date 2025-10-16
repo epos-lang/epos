@@ -2207,6 +2207,13 @@ func (tc *TypeChecker) instantiateGenericType(ty Type, typeParams []string, type
 			}
 		}
 		return t
+	case GenericInstType:
+		// Instantiate the type arguments of the generic instantiation
+		instArgs := make([]Type, len(t.TypeArgs))
+		for i, arg := range t.TypeArgs {
+			instArgs[i] = tc.instantiateGenericType(arg, typeParams, typeArgs)
+		}
+		return GenericInstType{Name: t.Name, TypeArgs: instArgs}
 	case ListType:
 		return ListType{Element: tc.instantiateGenericType(t.Element, typeParams, typeArgs)}
 	case RecordType:
@@ -2488,6 +2495,7 @@ func (tc *TypeChecker) instantiateWithMap(t Type, typeMap map[string]Type) Type 
 	}
 	return tc.instantiateGenericType(t, typeParams, typeArgs)
 }
+
 
 func (tc *TypeChecker) compatible(a, b Type) bool {
 	a = tc.resolveType(a)
