@@ -191,39 +191,44 @@ fn current-token(p: parser): token
     false => @{typ => token-eof, value => ""}
   end
 end
-# stopping point
+
 fn advance-parser(p: parser): parser
-  @{tokens: p.tokens, pos: p.pos + 1}
+  @{tokens => p.tokens, pos => p.pos + 1}
 end
 
-fn parse-number(p: parser): @{expr: llvm-value, parser: parser}
-  tok = current-token(p)
-  num-val = string-to-int(tok.value)
-  expr = @{value: num-val}
-  @{expr: llvm-value-from-int(num-val), parser: advance-parser(p)}
+record parse-type
+  expr: llvm-value
+  parser: parser
 end
 
-fn parse-identifier(p: parser): @{expr: llvm-value, parser: parser}
-  tok = current-token(p)
-  expr = @{name: tok.value}
-  @{expr: llvm-value-from-string(tok.value), parser: advance-parser(p)}
+fn parse-number(p: parser): parse-type
+  tok := current-token(p)
+  num-val := string-to-int(tok.value)
+  expr := @{value => num-val}
+  @{expr => llvm-value-from-int(num-val), parser => advance-parser(p)}
 end
 
-fn parse-expression(p: parser): @{expr: llvm-value, parser: parser}
-  tok = current-token(p)
+fn parse-identifier(p: parser): parse-type
+  tok := current-token(p)
+  expr := @{name => tok.value}
+  @{expr => llvm-value-from-string(tok.value), parser => advance-parser(p)}
+end
+
+fn parse-expression(p: parser): parse-type
+  tok := current-token(p)
   
   match tok.typ then
     token-number => parse-number(p)
     token-identifier => parse-identifier(p)
-    _ => @{expr: llvm-const-int(0), parser: p}
+    _ => @{expr => llvm-const-int(0), parser => p}
   end
 end
 
 # Test the lexer
 fn test-lexer*()
-  input = "fn main() x = 42 end"
-  lexer = create-lexer(input)
-  result = lex-tokens(lexer)
+  input := "fn main() x = 42 end"
+  lexer := create-lexer(input)
+  result := lex-tokens(lexer)
   
   print("Lexed tokens:")
   print-tokens(result.tokens)
@@ -235,7 +240,7 @@ end
 
 fn print-token-list(tokens: list(token), index: int)
   match index < list-length(tokens) then
-    true => 
+    true =>
       tok = list-get(tokens, index)
       print("Token type: " + int-to-string(tok.typ) + ", value: '" + tok.value + "'")
       print-token-list(tokens, index + 1)
