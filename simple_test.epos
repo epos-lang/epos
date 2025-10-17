@@ -1,0 +1,14 @@
+# Simple test program for self-hosting compiler
+
+fn test-basic*()
+  x = 42
+  y = x + 10
+  print(y)
+end
+
+fn main*()
+  print(123)
+  test-basic()
+end
+
+main()

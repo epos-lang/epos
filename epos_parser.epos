@@ -1,0 +1,288 @@
+# Epos Parser written in Epos
+# This is a simplified version of the Go parser
+
+# Token types - using integers to represent them
+token-eof := 0
+token-number := 1
+token-identifier := 2
+token-plus := 3
+token-minus := 4
+token-assign := 5
+token-function := 6
+token-end := 7
+token-string := 8
+
+# Token structure
+record token
+  typ: int
+  value: string
+end
+
+# AST node types
+record number-expr
+  value: int
+end
+
+record var-expr
+  name: string
+end
+
+record binary-expr
+  op: int
+  left: llvm-value  # Will hold AST nodes as opaque pointers
+  right: llvm-value
+end
+
+record assign-stmt
+  var: string
+  expr: llvm-value
+end
+
+record function-stmt
+  name: string
+  body: list(llvm-value)
+end
+
+# Lexer state
+record lexer
+  input: string
+  pos: int
+  tokens: list(token)
+end
+
+fn create-lexer*(input: string): lexer
+  @{
+    input => input,
+    pos => 0,
+    tokens => {}
+  }
+end
+
+fn current-char(l: lexer): string
+  match l.pos < l.input.len() then
+    # TODO: Add stirng splice function
+    1 => string-slice(l.input, l.pos, l.pos + 1)
+    _ => ""
+  end
+end
+
+fn advance(l: lexer): lexer
+  @{
+    input => l.input,
+    pos => l.pos + 1,
+    tokens => l.tokens
+  }
+end
+
+fn add-token(l: lexer, typ: int, value: string): lexer
+  new-token: token = @{typ: typ, value: value}
+  @{
+    input => l.input,
+    pos => l.pos + string-length(value),
+    tokens => l.tokens + {new-token}
+  }
+end
+
+fn is-digit(ch: string): bool
+  match ch then
+    "0", "1", "2", "3", "4", "5", "6", "7", "8", "9" => true
+    _ => false
+  end
+end
+
+fn is-letter(ch: string): bool
+  # Simplified - just check a few letters
+  match ch then
+    "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
+    "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
+    "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M",
+    "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z" => true
+    _ => false
+  end
+end
+
+fn lex-number(l: lexer): lexer
+  start-pos := l.pos
+  current := l
+
+  # Read digits
+  loop-result: lexer = match is-digit(current-char(current)) then
+    true => current.advance().lex-number()
+    false => current
+  end
+  
+  # TODO: Add string splice function
+  number-str = string-slice(l.input, start-pos, loop-result.pos)
+  add-token(loop-result, token-number, number-str)
+end
+
+fn lex-identifier(l: lexer): lexer
+  start-pos := l.pos
+  current := l
+
+  # Read letters/digits
+  loop-result: lexer = match current.current-char().is-letter() or current.current-char().is-digit() then
+    true => current.advance().lex-identifier()
+    false => current
+  end
+
+  # TODO: Add string splice function
+  id-str := string-slice(l.input, start-pos, loop-result.pos)
+ 
+  # Check for keywords
+  tok-type: int = match id-str then
+    "fn" => token-function
+    "end" => token-end
+    _ => token-identifier
+  end
+
+  add-token(loop-result, tok-type, id-str)
+end
+
+fn lex-string(l: lexer): lexer
+  start-pos := l.pos + 1  # Skip opening quote
+  current := advance(l)   # Skip opening quote
+  
+  # Read until closing quote
+  loop-result: lexer = match current.current-char() then
+    "" => current  # EOF
+    _ => lex-string(current)
+  end
+  
+  # TODO: Add string splice function
+  str-content := string-slice(l.input, start-pos, loop-result.pos)
+  result := advance(loop-result)  # Skip closing quote
+  add-token(result, token-string, str-content)
+end
+
+fn lex-tokens(l: lexer): lexer
+  ch := l.current-char()
+  
+  match ch then
+    "" => add-token(l, token-eof, "")
+    " " => advance(l).lex-tokens()
+    "+" => add-token(l, token-plus, "+").lex-tokens()
+    "-" => add-token(l, token-minus, "-").lex-tokens()
+    "=" => add-token(l, token-assign, "=").lex-tokens()
+    _ => match is-digit(ch) then
+           true => l.lex-number().lex-tokens()
+           false => match is-letter(ch) then
+                      true => lex-identifier(l).lex-tokens()
+                      false => advance(l).lex-tokens()  # Skip unknown chars
+                    end
+         end
+  end
+end
+
+# Parser state
+record parser
+  tokens: list(token),
+  pos: int
+end
+
+fn create-parser*(tokens: list(token)): parser
+  @{tokens => tokens, pos => 0}
+end
+
+fn current-token(p: parser): token
+  match p.pos < p.tokens.len() then
+    # TODO: ???
+    true => list-get(p.tokens, p.pos)
+    false => @{typ => token-eof, value => ""}
+  end
+end
+# stopping point
+fn advance-parser(p: parser): parser
+  @{tokens: p.tokens, pos: p.pos + 1}
+end
+
+fn parse-number(p: parser): @{expr: llvm-value, parser: parser}
+  tok = current-token(p)
+  num-val = string-to-int(tok.value)
+  expr = @{value: num-val}
+  @{expr: llvm-value-from-int(num-val), parser: advance-parser(p)}
+end
+
+fn parse-identifier(p: parser): @{expr: llvm-value, parser: parser}
+  tok = current-token(p)
+  expr = @{name: tok.value}
+  @{expr: llvm-value-from-string(tok.value), parser: advance-parser(p)}
+end
+
+fn parse-expression(p: parser): @{expr: llvm-value, parser: parser}
+  tok = current-token(p)
+  
+  match tok.typ then
+    token-number => parse-number(p)
+    token-identifier => parse-identifier(p)
+    _ => @{expr: llvm-const-int(0), parser: p}
+  end
+end
+
+# Test the lexer
+fn test-lexer*()
+  input = "fn main() x = 42 end"
+  lexer = create-lexer(input)
+  result = lex-tokens(lexer)
+  
+  print("Lexed tokens:")
+  print-tokens(result.tokens)
+end
+
+fn print-tokens(tokens: list(token))
+  print-token-list(tokens, 0)
+end
+
+fn print-token-list(tokens: list(token), index: int)
+  match index < list-length(tokens) then
+    true => 
+      tok = list-get(tokens, index)
+      print("Token type: " + int-to-string(tok.typ) + ", value: '" + tok.value + "'")
+      print-token-list(tokens, index + 1)
+    false => print("Done")
+  end
+end
+
+# Helper functions that would need to be implemented
+fn string-length*(s: string): int
+  # This would need to be implemented as a built-in
+  42  # Placeholder
+end
+
+fn string-slice*(s: string, start: int, endp: int): string
+  # This would need to be implemented as a built-in
+  s  # Placeholder
+end
+
+fn string-to-int*(s: string): int
+  # This would need to be implemented as a built-in
+  42  # Placeholder  
+end
+
+fn int-to-string*(i: int): string
+  # This would need to be implemented as a built-in
+  "42"  # Placeholder
+end
+
+fn list-length*(l: list(token)): int
+  # This would need to be implemented as a built-in
+  0  # Placeholder
+end
+
+fn list-get*(l: list(token), index: int): token
+  # This would need to be implemented as a built-in
+  @{typ: 0, value: ""}  # Placeholder
+end
+
+# LLVM helper functions - these convert AST nodes to LLVM values
+fn llvm-value-from-int*(i: int): llvm-value
+  # This creates an LLVM constant integer
+  llvm-const-int(i)
+end
+
+fn llvm-value-from-string*(s: string): llvm-value
+  # This would create an LLVM string constant
+  llvm-const-int(0)  # Placeholder
+end
+
+test-lexer()

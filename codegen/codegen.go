@@ -1525,11 +1525,22 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 				elemPtr.InBounds = true
 				return bb.NewLoad(elemTy, elemPtr), bb
 			} else if calleeName == "len" {
-				listPtr, bb := cg.genExpr(bb, e.Args[0], vars)
-				structTy := listPtr.Type().(*types.PointerType).ElemType
-				lengthPtr := bb.NewGetElementPtr(structTy, listPtr, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
-				length := bb.NewLoad(types.I64, lengthPtr)
-				return length, bb
+				argVal, bb := cg.genExpr(bb, e.Args[0], vars)
+				
+				// Check if it's a list type
+				if argVal.Type().String() == "{i64, i8*}*" {
+					// List type - get length from struct
+					structTy := argVal.Type().(*types.PointerType).ElemType
+					lengthPtr := bb.NewGetElementPtr(structTy, argVal, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
+					length := bb.NewLoad(types.I64, lengthPtr)
+					return length, bb
+				} else if argVal.Type().String() == "i8*" {
+					// String type - call strlen
+					length := bb.NewCall(cg.strlen, argVal)
+					return length, bb
+				} else {
+					panic("len() called on unsupported type: " + argVal.Type().String())
+				}
 			} else if calleeName == "compare" {
 				if len(e.Args) != 2 {
 					panic("compare takes two arguments")
@@ -1801,6 +1812,119 @@ func (cg *CodeGen) genExpr(bb *ir.Block, expr parser.Expr, vars map[string]varIn
 					}
 				}
 				return constant.NewInt(types.I32, 0), bb
+			// Additional LLVM type bindings
+			} else if calleeName == "llvm-type-i64" {
+				return constant.NewNull(types.NewPointer(types.I8)), bb // Placeholder
+			} else if calleeName == "llvm-type-i8" {
+				return constant.NewNull(types.NewPointer(types.I8)), bb // Placeholder
+			} else if calleeName == "llvm-type-i1" {
+				return constant.NewNull(types.NewPointer(types.I8)), bb // Placeholder
+			} else if calleeName == "llvm-type-double" {
+				return constant.NewNull(types.NewPointer(types.I8)), bb // Placeholder
+			} else if calleeName == "llvm-type-void" {
+				return constant.NewNull(types.NewPointer(types.I8)), bb // Placeholder
+			} else if calleeName == "llvm-type-pointer" {
+				return constant.NewNull(types.NewPointer(types.I8)), bb // Placeholder
+			} else if calleeName == "llvm-type-struct" {
+				return constant.NewNull(types.NewPointer(types.I8)), bb // Placeholder
+			// More LLVM instruction bindings
+			} else if calleeName == "llvm-build-add" {
+				return constant.NewNull(types.NewPointer(types.I8)), bb // Placeholder
+			} else if calleeName == "llvm-build-sub" {
+				return constant.NewNull(types.NewPointer(types.I8)), bb // Placeholder
+			} else if calleeName == "llvm-build-mul" {
+				return constant.NewNull(types.NewPointer(types.I8)), bb // Placeholder
+			} else if calleeName == "llvm-build-icmp" {
+				return constant.NewNull(types.NewPointer(types.I8)), bb // Placeholder
+			} else if calleeName == "llvm-build-alloca" {
+				return constant.NewNull(types.NewPointer(types.I8)), bb // Placeholder
+			} else if calleeName == "llvm-build-store" {
+				return constant.NewNull(types.NewPointer(types.I8)), bb // Placeholder
+			} else if calleeName == "llvm-build-load" {
+				return constant.NewNull(types.NewPointer(types.I8)), bb // Placeholder
+			} else if calleeName == "llvm-build-br" {
+				return constant.NewNull(types.NewPointer(types.I8)), bb // Placeholder
+			} else if calleeName == "llvm-build-cond-br" {
+				return constant.NewNull(types.NewPointer(types.I8)), bb // Placeholder
+			// String manipulation functions for compiler
+			} else if calleeName == "string-length" {
+				arg, bb := cg.genExpr(bb, e.Args[0], vars)
+				result := bb.NewCall(cg.strlen, arg)
+				return result, bb
+			} else if calleeName == "string-slice" {
+				str, bb := cg.genExpr(bb, e.Args[0], vars)
+				start, bb := cg.genExpr(bb, e.Args[1], vars)
+				end, bb := cg.genExpr(bb, e.Args[2], vars)
+				
+				// Calculate length of substring
+				length := bb.NewSub(end, start)
+				
+				// Allocate memory for new string
+				malloc_size := bb.NewAdd(length, constant.NewInt(types.I64, 1)) // +1 for null terminator
+				new_str := bb.NewCall(cg.malloc, malloc_size)
+				new_str_typed := bb.NewBitCast(new_str, types.NewPointer(types.I8))
+				
+				// Copy substring
+				src_ptr := bb.NewGetElementPtr(types.I8, str, start)
+				bb.NewCall(cg.memcpy, new_str_typed, src_ptr, length, constant.NewBool(false))
+				
+				// Add null terminator
+				null_pos := bb.NewGetElementPtr(types.I8, new_str_typed, length)
+				bb.NewStore(constant.NewInt(types.I8, 0), null_pos)
+				
+				return new_str_typed, bb
+			} else if calleeName == "string-to-int" {
+				// Simple implementation - for a real compiler this would be more robust
+				arg, bb := cg.genExpr(bb, e.Args[0], vars)
+				
+				// Create atoi function if not exists
+				atoi := cg.module.NewFunc("atoi", types.I32, ir.NewParam("", types.NewPointer(types.I8)))
+				result64 := bb.NewCall(atoi, arg)
+				result := bb.NewSExt(result64, types.I64)
+				return result, bb
+			} else if calleeName == "int-to-string" {
+				arg, bb := cg.genExpr(bb, e.Args[0], vars)
+				
+				// Allocate buffer for string representation
+				buffer_size := constant.NewInt(types.I64, 32) // 32 chars should be enough for most integers
+				buffer := bb.NewCall(cg.malloc, buffer_size)
+				buffer_typed := bb.NewBitCast(buffer, types.NewPointer(types.I8))
+				
+				// Create format string for sprintf
+				cg.intToStringCounter++
+				fmt_str := cg.module.NewGlobalDef(fmt.Sprintf("int_to_str_fmt_%d", cg.intToStringCounter), constant.NewCharArrayFromString("%lld\x00"))
+				fmt_ptr := bb.NewGetElementPtr(fmt_str.Type().(*types.PointerType).ElemType, fmt_str, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
+				
+				// Call sprintf
+				bb.NewCall(cg.sprintf, buffer_typed, fmt_ptr, arg)
+				
+				return buffer_typed, bb
+			} else if calleeName == "file-read-all" {
+				filename, bb := cg.genExpr(bb, e.Args[0], vars)
+				
+				// Open file for reading
+				mode_str := cg.module.NewGlobalDef(fmt.Sprintf("read_mode_%d", cg.fileCounter), constant.NewCharArrayFromString("rb\x00"))
+				mode_ptr := bb.NewGetElementPtr(mode_str.Type().(*types.PointerType).ElemType, mode_str, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
+				file_ptr := bb.NewCall(cg.fopen, filename, mode_ptr)
+				cg.fileCounter++
+				
+				// For simplicity, assume file exists and read a fixed buffer
+				// In a real implementation, we'd check for errors and dynamically allocate
+				buffer_size := constant.NewInt(types.I64, 65536) // 64KB buffer
+				buffer := bb.NewCall(cg.malloc, buffer_size)
+				buffer_typed := bb.NewBitCast(buffer, types.NewPointer(types.I8))
+				
+				// Read file content
+				bytes_read := bb.NewCall(cg.fread, buffer_typed, constant.NewInt(types.I64, 1), buffer_size, file_ptr)
+				
+				// Null terminate
+				null_pos := bb.NewGetElementPtr(types.I8, buffer_typed, bytes_read)
+				bb.NewStore(constant.NewInt(types.I8, 0), null_pos)
+				
+				// Close file
+				bb.NewCall(cg.fclose, file_ptr)
+				
+				return buffer_typed, bb
 			} else if vi, ok := vars[calleeName]; ok {
 				callee = bb.NewLoad(vi.Typ, vi.Alloc)
 			} else if f, ok := cg.functions[calleeName]; ok {

@@ -1,0 +1,57 @@
+= Introduction to Epos
+
+Epos is a functional, statically typed programming language that compiles to LLVM IR. //It emphasizes immutability, pattern matching, and clean syntax.
+
+== Key Features
+
+- *Functional Programming*: Functions are first-class values, immutable by default
+- *Static Typing*: Type-safe with generics and type inference
+//- *Pattern Matching*: Powerful control flow through pattern matching
+//- *Records and Lists*: Built-in data structures with clean syntax
+- *Compiled*: Compiles to efficient native code via LLVM
+
+== Hello World
+
+Your first Epos program:
+
+```epos
+fn hello()
+    print("Hello World!")
+end
+hello()
+```
+
+== Comments
+
+Epos supports single-line and nestable multi-line comments:
+
+```epos
+# This is a single-line comment
+
+(#
+  This is a multi-line comment
+  (#
+    And they can be nested!
+  #)
+#)
+```
+
+== Basic Syntax Rules
+
+- *Naming*: Currently, case agnostic. You can use camel case, snake case, kabab case, etc. //Use kebab-case for identifiers (`multi-word-name`)
+- *Visibility*: Everything is private by default, use "\*" after a name to make public
+- *Immutability*: Variables are immutable
+- *Uniform Funciton Call Syntax*: Functions can be called with like this `a.some-func(b)` and like this `some-func(a, b)`
+- *Balanced Multi-line String Literals*: Strings can be multiline with `[[` and `]]`
+
+== Getting Started
+
+To create, compile and run an Epos program:
+
+```bash
+nix github:epos-lang/epos -- init hello-world
+cd hello-world
+epos -r hello-world/main.epos
+```
+
+Next, learn about variables and types in Epos.

@@ -1852,7 +1852,11 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 					e.Type = BasicType("int")
 					return BasicType("int"), nil
 				}
-				return nil, fmt.Errorf("len called on non-list")
+				if bt, ok := argTy.(BasicType); ok && bt == BasicType("string") {
+					e.Type = BasicType("int")
+					return BasicType("int"), nil
+				}
+				return nil, fmt.Errorf("len called on non-list or non-string")
 			} else if ve.Name == "open-file" {
 				if len(e.Args) != 1 {
 					return nil, fmt.Errorf("open-file takes one argument")
@@ -2117,6 +2121,279 @@ func (tc *TypeChecker) typeCheckExpr(expr Expr, env map[string]Type) (Type, erro
 				}
 				e.Type = BasicType("void")
 				return BasicType("void"), nil
+			// Additional LLVM type bindings
+			} else if ve.Name == "llvm-type-i64" {
+				if len(e.Args) != 0 {
+					return nil, fmt.Errorf("llvm-type-i64 takes no arguments")
+				}
+				e.Type = BasicType("llvm-type")
+				return BasicType("llvm-type"), nil
+			} else if ve.Name == "llvm-type-i8" {
+				if len(e.Args) != 0 {
+					return nil, fmt.Errorf("llvm-type-i8 takes no arguments")
+				}
+				e.Type = BasicType("llvm-type")
+				return BasicType("llvm-type"), nil
+			} else if ve.Name == "llvm-type-i1" {
+				if len(e.Args) != 0 {
+					return nil, fmt.Errorf("llvm-type-i1 takes no arguments")
+				}
+				e.Type = BasicType("llvm-type")
+				return BasicType("llvm-type"), nil
+			} else if ve.Name == "llvm-type-double" {
+				if len(e.Args) != 0 {
+					return nil, fmt.Errorf("llvm-type-double takes no arguments")
+				}
+				e.Type = BasicType("llvm-type")
+				return BasicType("llvm-type"), nil
+			} else if ve.Name == "llvm-type-void" {
+				if len(e.Args) != 0 {
+					return nil, fmt.Errorf("llvm-type-void takes no arguments")
+				}
+				e.Type = BasicType("llvm-type")
+				return BasicType("llvm-type"), nil
+			} else if ve.Name == "llvm-type-pointer" {
+				if len(e.Args) != 1 {
+					return nil, fmt.Errorf("llvm-type-pointer takes one argument")
+				}
+				_, err := tc.typeCheckExpr(e.Args[0], env) // element type
+				if err != nil {
+					return nil, err
+				}
+				e.Type = BasicType("llvm-type")
+				return BasicType("llvm-type"), nil
+			} else if ve.Name == "llvm-type-struct" {
+				if len(e.Args) != 1 {
+					return nil, fmt.Errorf("llvm-type-struct takes one argument")
+				}
+				_, err := tc.typeCheckExpr(e.Args[0], env) // field types list
+				if err != nil {
+					return nil, err
+				}
+				e.Type = BasicType("llvm-type")
+				return BasicType("llvm-type"), nil
+			// More LLVM instruction bindings
+			} else if ve.Name == "llvm-build-add" {
+				if len(e.Args) != 3 {
+					return nil, fmt.Errorf("llvm-build-add takes three arguments")
+				}
+				_, err := tc.typeCheckExpr(e.Args[0], env) // builder
+				if err != nil {
+					return nil, err
+				}
+				_, err = tc.typeCheckExpr(e.Args[1], env) // lhs
+				if err != nil {
+					return nil, err
+				}
+				_, err = tc.typeCheckExpr(e.Args[2], env) // rhs
+				if err != nil {
+					return nil, err
+				}
+				e.Type = BasicType("llvm-value")
+				return BasicType("llvm-value"), nil
+			} else if ve.Name == "llvm-build-sub" {
+				if len(e.Args) != 3 {
+					return nil, fmt.Errorf("llvm-build-sub takes three arguments")
+				}
+				_, err := tc.typeCheckExpr(e.Args[0], env) // builder
+				if err != nil {
+					return nil, err
+				}
+				_, err = tc.typeCheckExpr(e.Args[1], env) // lhs
+				if err != nil {
+					return nil, err
+				}
+				_, err = tc.typeCheckExpr(e.Args[2], env) // rhs
+				if err != nil {
+					return nil, err
+				}
+				e.Type = BasicType("llvm-value")
+				return BasicType("llvm-value"), nil
+			} else if ve.Name == "llvm-build-mul" {
+				if len(e.Args) != 3 {
+					return nil, fmt.Errorf("llvm-build-mul takes three arguments")
+				}
+				_, err := tc.typeCheckExpr(e.Args[0], env) // builder
+				if err != nil {
+					return nil, err
+				}
+				_, err = tc.typeCheckExpr(e.Args[1], env) // lhs
+				if err != nil {
+					return nil, err
+				}
+				_, err = tc.typeCheckExpr(e.Args[2], env) // rhs
+				if err != nil {
+					return nil, err
+				}
+				e.Type = BasicType("llvm-value")
+				return BasicType("llvm-value"), nil
+			} else if ve.Name == "llvm-build-icmp" {
+				if len(e.Args) != 4 {
+					return nil, fmt.Errorf("llvm-build-icmp takes four arguments")
+				}
+				_, err := tc.typeCheckExpr(e.Args[0], env) // builder
+				if err != nil {
+					return nil, err
+				}
+				_, err = tc.typeCheckExpr(e.Args[1], env) // predicate
+				if err != nil {
+					return nil, err
+				}
+				_, err = tc.typeCheckExpr(e.Args[2], env) // lhs
+				if err != nil {
+					return nil, err
+				}
+				_, err = tc.typeCheckExpr(e.Args[3], env) // rhs
+				if err != nil {
+					return nil, err
+				}
+				e.Type = BasicType("llvm-value")
+				return BasicType("llvm-value"), nil
+			} else if ve.Name == "llvm-build-alloca" {
+				if len(e.Args) != 2 {
+					return nil, fmt.Errorf("llvm-build-alloca takes two arguments")
+				}
+				_, err := tc.typeCheckExpr(e.Args[0], env) // builder
+				if err != nil {
+					return nil, err
+				}
+				_, err = tc.typeCheckExpr(e.Args[1], env) // type
+				if err != nil {
+					return nil, err
+				}
+				e.Type = BasicType("llvm-value")
+				return BasicType("llvm-value"), nil
+			} else if ve.Name == "llvm-build-store" {
+				if len(e.Args) != 3 {
+					return nil, fmt.Errorf("llvm-build-store takes three arguments")
+				}
+				_, err := tc.typeCheckExpr(e.Args[0], env) // builder
+				if err != nil {
+					return nil, err
+				}
+				_, err = tc.typeCheckExpr(e.Args[1], env) // value
+				if err != nil {
+					return nil, err
+				}
+				_, err = tc.typeCheckExpr(e.Args[2], env) // pointer
+				if err != nil {
+					return nil, err
+				}
+				e.Type = BasicType("llvm-value")
+				return BasicType("llvm-value"), nil
+			} else if ve.Name == "llvm-build-load" {
+				if len(e.Args) != 3 {
+					return nil, fmt.Errorf("llvm-build-load takes three arguments")
+				}
+				_, err := tc.typeCheckExpr(e.Args[0], env) // builder
+				if err != nil {
+					return nil, err
+				}
+				_, err = tc.typeCheckExpr(e.Args[1], env) // type
+				if err != nil {
+					return nil, err
+				}
+				_, err = tc.typeCheckExpr(e.Args[2], env) // pointer
+				if err != nil {
+					return nil, err
+				}
+				e.Type = BasicType("llvm-value")
+				return BasicType("llvm-value"), nil
+			} else if ve.Name == "llvm-build-br" {
+				if len(e.Args) != 2 {
+					return nil, fmt.Errorf("llvm-build-br takes two arguments")
+				}
+				_, err := tc.typeCheckExpr(e.Args[0], env) // builder
+				if err != nil {
+					return nil, err
+				}
+				_, err = tc.typeCheckExpr(e.Args[1], env) // basic block
+				if err != nil {
+					return nil, err
+				}
+				e.Type = BasicType("llvm-value")
+				return BasicType("llvm-value"), nil
+			} else if ve.Name == "llvm-build-cond-br" {
+				if len(e.Args) != 4 {
+					return nil, fmt.Errorf("llvm-build-cond-br takes four arguments")
+				}
+				_, err := tc.typeCheckExpr(e.Args[0], env) // builder
+				if err != nil {
+					return nil, err
+				}
+				_, err = tc.typeCheckExpr(e.Args[1], env) // condition
+				if err != nil {
+					return nil, err
+				}
+				_, err = tc.typeCheckExpr(e.Args[2], env) // then block
+				if err != nil {
+					return nil, err
+				}
+				_, err = tc.typeCheckExpr(e.Args[3], env) // else block
+				if err != nil {
+					return nil, err
+				}
+				e.Type = BasicType("llvm-value")
+				return BasicType("llvm-value"), nil
+			// String manipulation functions for compiler
+			} else if ve.Name == "string-length" {
+				if len(e.Args) != 1 {
+					return nil, fmt.Errorf("string-length takes one argument")
+				}
+				_, err := tc.typeCheckExpr(e.Args[0], env) // string
+				if err != nil {
+					return nil, err
+				}
+				e.Type = BasicType("int")
+				return BasicType("int"), nil
+			} else if ve.Name == "string-slice" {
+				if len(e.Args) != 3 {
+					return nil, fmt.Errorf("string-slice takes three arguments")
+				}
+				_, err := tc.typeCheckExpr(e.Args[0], env) // string
+				if err != nil {
+					return nil, err
+				}
+				_, err = tc.typeCheckExpr(e.Args[1], env) // start
+				if err != nil {
+					return nil, err
+				}
+				_, err = tc.typeCheckExpr(e.Args[2], env) // end
+				if err != nil {
+					return nil, err
+				}
+				e.Type = BasicType("string")
+				return BasicType("string"), nil
+			} else if ve.Name == "string-to-int" {
+				if len(e.Args) != 1 {
+					return nil, fmt.Errorf("string-to-int takes one argument")
+				}
+				_, err := tc.typeCheckExpr(e.Args[0], env) // string
+				if err != nil {
+					return nil, err
+				}
+				e.Type = BasicType("int")
+				return BasicType("int"), nil
+			} else if ve.Name == "int-to-string" {
+				if len(e.Args) != 1 {
+					return nil, fmt.Errorf("int-to-string takes one argument")
+				}
+				_, err := tc.typeCheckExpr(e.Args[0], env) // int
+				if err != nil {
+					return nil, err
+				}
+				e.Type = BasicType("string")
+				return BasicType("string"), nil
+			} else if ve.Name == "file-read-all" {
+				if len(e.Args) != 1 {
+					return nil, fmt.Errorf("file-read-all takes one argument")
+				}
+				_, err := tc.typeCheckExpr(e.Args[0], env) // filename
+				if err != nil {
+					return nil, err
+				}
+				e.Type = BasicType("string")
+				return BasicType("string"), nil
 			}
 		}
 		calleeTy, err := tc.typeCheckExpr(e.Callee, env)

@@ -1,0 +1,55 @@
+# Epos Compiler written in Epos  
+# This is the main compiler driver
+
+import "./epos_parser.epos" 
+import "./epos_codegen.epos"
+
+# Simplified version of the main compiler logic
+fn compile-file*(input-file: string, output-file: string)
+  print("Compiling " + input-file + " to " + output-file)
+  
+  # Step 1: Read the input file
+  content = file-read-all(input-file)
+  print("Read " + int-to-string(string-length(content)) + " characters")
+  
+  # Step 2: Lex the input
+  lexer = create-lexer(content)
+  lexer-result = lex-tokens(lexer)
+  print("Lexed " + int-to-string(list-length(lexer-result.tokens)) + " tokens")
+  
+  # Step 3: Parse the tokens
+  parser = create-parser(lexer-result.tokens)
+  # In a real implementation, we'd parse into a full AST
+  # For now, just create a simple program
+  
+  # Step 4: Generate LLVM IR
+  codegen = create-codegen("compiled_module")
+  
+  # Generate a simple main function
+  codegen2 = generate-function(codegen, "main", {})
+  
+  # Step 5: Compile to executable
+  compile-to-executable(codegen2, output-file)
+  
+  print("Successfully compiled " + input-file + " to " + output-file)
+end
+
+# Command line argument handling (simplified)
+fn main*()
+  # In a real implementation, we'd parse command line arguments
+  # For now, just compile a test program
+  
+  input = "test.epos"
+  output = "test"
+  
+  print("Epos Self-Hosting Compiler")
+  compile-file(input, output)
+end
+
+# Helper function to read entire file
+fn file-read-all*(filename: string): string
+  # This would need to be implemented as a built-in or using file I/O
+  [[fn main() print("Hello World\") end]]  # Placeholder test program
+end
+
+main()

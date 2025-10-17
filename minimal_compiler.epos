@@ -1,0 +1,42 @@
+# Minimal Self-Hosting Epos Compiler
+
+fn create-hello-world*()
+  # Create LLVM module
+  module = llvm-module-create("hello_world")
+  
+  # Create main function type: () -> i32
+  main-type = llvm-function-type(llvm-type-i32(), {})
+  main-func = llvm-add-function(module, "main", main-type)
+  
+  # Create entry basic block
+  entry-block = llvm-append-basic-block(main-func, "entry")
+  builder = llvm-create-builder()
+  llvm-position-builder-at-end(builder, entry-block)
+  
+  # Create printf declaration
+  printf-type = llvm-function-type(llvm-type-i32(), {llvm-type-i8-ptr()})
+  printf-func = llvm-add-function(module, "printf", printf-type)
+  
+  # Create hello world string constant  
+  hello-global = llvm-build-global-string(builder, "Hello from self-hosting compiler!", "hello_str")
+  
+  # Call printf
+  hello-ptr = llvm-build-gep(builder, hello-global, {llvm-const-int(0), llvm-const-int(0)})
+  llvm-build-call(builder, printf-func, {hello-ptr})
+  
+  # Return 0
+  llvm-build-ret(builder, llvm-const-int(0))
+  
+  # Generate executable
+  llvm-write-bitcode(module, "selfhosted.bc")
+  llvm-compile-to-executable(module, "selfhosted")
+  
+  print("Generated selfhosted executable using Epos!")
+end
+
+fn main*()
+  print("Epos Self-Hosting Compiler Test")
+  create-hello-world()
+end
+
+main()

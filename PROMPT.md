@@ -1,0 +1,1 @@
+Convert the Epos LLVM compiler written in Go (files: cmd/main.go, parser/parser.go, codegen/codegen.go) to Epos code using the Epos LLVM bindings (reference `examples/llvm_hello_world.epos`, `examples/simple_llvm_test.epos`). If you need more LLVM bindings, add them to the current compiler and test them. Test this new compiler and make sure it works.

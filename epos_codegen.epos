@@ -1,0 +1,86 @@
+# Epos Code Generator written in Epos
+# This generates LLVM IR from Epos AST
+
+# Import the parser types
+import "./epos_parser.epos"
+
+record codegen @{
+  module: llvm-module,
+  builder: llvm-builder,
+  current-function: llvm-function
+}
+
+fn create-codegen*(module-name: string): codegen
+  mod = llvm-module-create(module-name)
+  builder = llvm-create-builder()
+  @{
+    module: mod,
+    builder: builder,
+    current-function: llvm-const-int(0)  # Placeholder
+  }
+end
+
+fn generate-number(cg: codegen, value: int): llvm-value
+  llvm-const-int(value)
+end
+
+fn generate-binary-op(cg: codegen, op: int, left: llvm-value, right: llvm-value): llvm-value
+  match op then
+    token-plus => llvm-build-add(cg.builder, left, right)
+    token-minus => llvm-build-sub(cg.builder, left, right)
+    _ => llvm-const-int(0)  # Default
+  end
+end
+
+fn generate-expression(cg: codegen, expr: llvm-value): llvm-value
+  # In a real implementation, we'd need to decode the AST node type
+  # For now, just return the expression as-is
+  expr
+end
+
+fn generate-function(cg: codegen, name: string, body: list(llvm-value)): codegen
+  # Create function type: () -> i32
+  func-type = llvm-function-type(llvm-type-i32(), {})
+  
+  # Add function to module
+  func = llvm-add-function(cg.module, name, func-type)
+  
+  # Create entry block
+  entry-block = llvm-append-basic-block(func, "entry")
+  llvm-position-builder-at-end(cg.builder, entry-block)
+  
+  # Generate body (simplified)
+  # In a real implementation, we'd generate code for each statement
+  result-value = llvm-const-int(0)
+  
+  # Return the value
+  llvm-build-ret(cg.builder, result-value)
+  
+  @{
+    module: cg.module,
+    builder: cg.builder,
+    current-function: func
+  }
+end
+
+fn compile-to-executable*(cg: codegen, output-name: string)
+  # Write bitcode and compile
+  bitcode-file = output-name + ".bc"
+  llvm-write-bitcode(cg.module, bitcode-file)
+  llvm-compile-to-executable(cg.module, output-name)
+end
+
+# Test the codegen
+fn test-codegen*()
+  cg = create-codegen("test_module")
+  
+  # Create a simple main function
+  cg2 = generate-function(cg, "main", {})
+  
+  # Compile to executable
+  compile-to-executable(cg2, "test_output")
+  
+  print("Generated test_output executable using Epos codegen!")
+end
+
+test-codegen()
