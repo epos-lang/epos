@@ -1,0 +1,41 @@
+# Simple LLVM Bindings Test
+
+print("Creating LLVM module...")
+module = llvm-module-create("test_module")
+
+print("Creating function type...")  
+func-type = llvm-function-type(llvm-type-i32(), {})
+
+print("Adding main function...")
+main-func = llvm-add-function(module, "main", func-type)
+
+print("Creating basic block...")
+entry = llvm-append-basic-block(main-func, "entry")
+
+print("Creating builder...")
+builder = llvm-create-builder()
+
+print("Positioning builder...")
+llvm-position-builder-at-end(builder, entry)
+
+print("Building global string...")
+hello-global = llvm-build-global-string(builder, "Hello from Epos!", "hello")
+
+print("Building function call...")
+printf-type = llvm-function-type(llvm-type-i32(), {llvm-type-i8-ptr()})
+printf-func = llvm-add-function(module, "printf", printf-type)
+
+indices = {llvm-const-int(0), llvm-const-int(0)}
+hello-ptr = llvm-build-gep(builder, hello-global, indices)
+llvm-build-call(builder, printf-func, {hello-ptr})
+
+print("Building return...")
+llvm-build-ret(builder, llvm-const-int(0))
+
+print("Writing bitcode...")
+llvm-write-bitcode(module, "output.bc")
+
+print("Compiling to executable (simulated)...")
+llvm-compile-to-executable(module, "output")
+
+print("LLVM bindings test completed!")

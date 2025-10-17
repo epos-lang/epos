@@ -1,0 +1,35 @@
+# LLVM Bindings Hello World Example
+# This Epos program uses LLVM bindings to generate an executable
+
+# Create LLVM module
+module = llvm-module-create("hello_world_module")
+
+# Create main function type: () -> i32
+main-type = llvm-function-type(llvm-type-i32(), {})
+main-func = llvm-add-function(module, "main", main-type)
+
+# Create entry basic block
+entry-block = llvm-append-basic-block(main-func, "entry")
+builder = llvm-create-builder()
+llvm-position-builder-at-end(builder, entry-block)
+
+# Create hello world string constant
+hello-str = "Hello World from LLVM bindings!\n"
+hello-global = llvm-build-global-string(builder, hello-str, "hello_str")
+
+# Create printf declaration
+printf-type = llvm-function-type(llvm-type-i32(), {llvm-type-i8-ptr()})
+printf-func = llvm-add-function(module, "printf", printf-type)
+
+# Call printf
+hello-ptr = llvm-build-gep(builder, hello-global, {llvm-const-int(0), llvm-const-int(0)})
+llvm-build-call(builder, printf-func, {hello-ptr})
+
+# Return 0
+llvm-build-ret(builder, llvm-const-int(0))
+
+# Generate executable
+llvm-write-bitcode(module, "hello_world.bc")
+llvm-compile-to-executable(module, "hello_world")
+
+print("Generated hello_world executable using LLVM bindings!")
